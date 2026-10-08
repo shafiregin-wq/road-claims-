@@ -2,7 +2,7 @@
 
 import { S, me, colleague, whoLabel, rerender } from "./state.js";
 import { CATEGORIES, CAT, PROFILE_FIELDS, BUILTIN_TEMPLATES } from "./fields.js";
-import { totals, inMonth, onDay, byDay, byTrip, newestFirst, oldestFirst, reportExpenses, balance } from "./reports.js";
+import { totals, inMonth, onDay, byDay, byTrip, newestFirst, oldestFirst, reportExpenses, balance, claimable } from "./reports.js";
 import { esc, aed, compact, todayISO, monthOf, monthLabel, monthShort, shiftMonth, daysInMonth, parseISO, pad, fmtDayMonth, fmtLongDay, fmtTime, formatInvite, MONTHS } from "./util.js";
 import { ic } from "./ui.js";
 import { bannerDismissed } from "./push.js";
@@ -275,10 +275,14 @@ export function viewReports() {
   ${cats.map(c => {
     const items = reportExpenses(S.expenses, { category: c.id, month, paidBy: who });
     const total = items.reduce((s, e) => s + (+e.amount || 0), 0);
+    const claim = items.reduce((s, e) => s + claimable(e), 0);
+    const shared = who ? items.filter(e => e.paidBy !== who).length : 0;
     const tpl = S.templates[c.id];
     return `<section class="card report-card" data-testid="report-${c.id}">
       <div class="card-head"><h2>${c.emoji} ${c.label}</h2><span class="muted small">${plural(items.length, "expense")}</span></div>
       <p class="report-total">Total: <span class="money">${aed(total)}</span></p>
+      ${c.id === "fuel" ? `<p class="small">Claimable: <b class="money">${aed(claim)}</b> <span class="muted">(half of Deployment, all of AEP Client Site)</span></p>` : ""}
+      ${shared ? `<p class="small muted">Includes ${plural(shared, "shared Deployment bill")} paid by ${esc(other ? other.displayName : "your colleague")}.</p>` : ""}
       <p class="small ${tpl && tpl.filePath || BUILTIN_TEMPLATES[c.id] ? "" : "muted"}">${tpl && tpl.filePath ? `${ic("sheet", 15)} Form: ${esc(tpl.fileName)}` : BUILTIN_TEMPLATES[c.id] ? `${ic("sheet", 15)} Form: ${esc(BUILTIN_TEMPLATES[c.id].fileName.replace(/\.xlsx$/, ""))}` : `No ${c.label.toLowerCase()} template yet: MITAK makes a simple Excel layout. <button class="link" data-act="go" data-to="settings" data-anchor="templates">Upload template</button>`}</p>
       <button class="btn primary" data-act="generate" data-cat="${c.id}" ${items.length ? "" : "disabled"}>${ic("sheet", 18)} Generate Excel</button>
     </section>`;

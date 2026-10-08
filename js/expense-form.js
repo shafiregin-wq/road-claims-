@@ -47,12 +47,6 @@ function fillRemembered(F) {
     else if (f.initial) F.details[f.key] = f.initial;
   }
 }
-// Fuel for a "Deployment" is shared half each (as on the fuel claim form); a client-site trip isn't.
-function splitFromSite(F) {
-  if (F.category !== "fuel" || F._splitTouched || !colleague()) return;
-  if (F.details.site_type === "Deployment") F.split = "equal";
-  else if (F.details.site_type) F.split = "none";
-}
 const shareOf = F => {
   const a = num(F.amount) || 0;
   if (F.split === "equal") return r2(a / 2);
@@ -63,7 +57,8 @@ function detailInput(f, F) {
   const v = F.details[f.key] ?? "";
   if (f.type === "choice") {
     return `<div class="field full"><span class="lbl">${f.label}</span><div class="seg" role="group" aria-label="${esc(f.label)}">${f.options.map(o =>
-      `<button class="chip" data-detail="${f.key}" data-v="${esc(o)}" aria-pressed="${v === o}">${esc((f.optionLabels || {})[o] || o)}</button>`).join("")}</div></div>`;
+      `<button class="chip" data-detail="${f.key}" data-v="${esc(o)}" aria-pressed="${v === o}">${esc((f.optionLabels || {})[o] || o)}</button>`).join("")}</div>
+      ${f.hint && f.hint[v] ? `<span class="hint">${esc(f.hint[v])}</span>` : ""}</div>`;
   }
   return `<div class="field"><label class="lbl" for="d-${f.key}">${f.label}${f.unit ? ` <em>${f.unit}</em>` : ""}</label>
     <input id="d-${f.key}" data-d="${f.key}" ${f.type === "number" ? `type="text" inputmode="decimal"` : `type="text"`} ${f.list ? `list="${f.list}"` : ""} placeholder="${esc(f.placeholder || "")}" value="${esc(v)}"></div>`;
@@ -236,14 +231,13 @@ export function openExpense(id, preset = {}) {
     if (b.dataset.detail) {
       ev.preventDefault();
       F.details[b.dataset.detail] = b.dataset.v;
-      if (b.dataset.detail === "site_type") splitFromSite(F);
       persist(); draw(); return;
     }
     if (b.dataset.pick) {
       ev.preventDefault();
       F[b.dataset.pick] = b.dataset.v;
       err = "";
-      if (b.dataset.pick === "category") { fillRemembered(F); splitFromSite(F); }
+      if (b.dataset.pick === "category") fillRemembered(F);
       persist(); draw();
       if (b.dataset.pick === "category" && !num(F.amount)) $("#e-amount", sh.body).focus();
       return;

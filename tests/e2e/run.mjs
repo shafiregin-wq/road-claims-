@@ -144,6 +144,7 @@ test("demo: Excel reports, with and without the company template", async () => {
   const fuelTotal = money(await page.textContent("[data-testid=report-fuel] .report-total .money"));
   await page.click("[data-act=rep-who]:has-text('Only mine')");
   assert.match(await page.textContent("[data-testid=report-fuel]"), /Form: Fuel Expense Claim Form/);
+  assert.match(await page.textContent("[data-testid=report-fuel]"), /Claimable: AED [\d,.]+/);
 
   // Fuel: the company's fuel claim form, built in
   await page.click("[data-testid=report-fuel] [data-act=generate]");
@@ -233,14 +234,13 @@ test("demo: only your own expenses can be changed; splits and payments add up", 
   await page.click(".tab[data-to=home]");
   assert.equal(await net(), +(before + 40).toFixed(2));
 
-  // Fuel for a deployment is shared half each; the last Site / Type is remembered.
+  // Deployment fuel goes on both fuel forms, but doesn't create a debt (that's settled outside the app).
   await page.click(".add-main");
   await page.click("[data-pick=category][data-v=fuel]");
   assert.equal(await page.getAttribute("[data-detail=site_type][data-v='AEP Client Site']", "aria-pressed"), "true", "remembers Sami's last fuel (a client site)");
   await page.click("[data-detail=site_type][data-v=Deployment]");
-  assert.equal(await page.getAttribute("[data-split=equal]", "aria-pressed"), "true");
-  await page.click("[data-detail=site_type][data-v='AEP Client Site']");
-  assert.equal(await page.getAttribute("[data-split=none]", "aria-pressed"), "true", "client-site fuel isn't shared");
+  assert.match(await page.textContent("[data-testid=expense-sheet]"), /this bill goes on both your fuel forms/);
+  assert.equal(await page.getAttribute("[data-split=none]", "aria-pressed"), "true", "not split in the app");
   await page.click(".sheet [data-close]");
 
   // Omar pays 40 back.

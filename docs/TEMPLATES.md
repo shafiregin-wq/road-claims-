@@ -10,7 +10,9 @@ both of you use the same form.
 personal details removed. Its mapping is `BUILTIN_TEMPLATES.fuel` in [`js/fields.js`](../js/fields.js):
 name, designation and employee ID at the top, rows from 13 (S.No, Date, Site / Type, Full Fuel Amount,
 KMs Travelled, Bill Attached, Remarks), the signature name and date at the bottom. The Reimbursable
-Amount column and the totals stay formulas. With more than 8 fuel expenses, rows are added above the
+Amount column and the totals stay formulas. Each person's form lists their own fuel plus the colleague's
+Deployment bills (one shared car, so both claim half; remark "Shared bill – paid by …"). AEP Client Site
+fuel is only on the payer's form. With more than 8 fuel expenses, rows are added above the
 total. Uploading another fuel form in Settings replaces it.
 
 ## What MITAK changes in a template
