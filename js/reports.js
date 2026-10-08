@@ -91,6 +91,7 @@ export function buildReportData({ expenses, members, workspaceName = "MITAK", ca
       expense_time: (e.time || "").slice(0, 5),
       day_name: dayName(e.date),
       category: CAT[e.category] ? CAT[e.category].label : e.category,
+      site_type: d.site_type || "",
       amount,
       amount_excl_vat: r2(amount - vat),
       vat_amount: vat,
@@ -102,6 +103,10 @@ export function buildReportData({ expenses, members, workspaceName = "MITAK", ca
       odometer: odo,
       odometer_previous: prev,
       distance_km: odo != null && prev != null && odo > prev ? odo - prev : null,
+      kms: numOrNull(d.kms) ?? (odo != null && prev != null && odo > prev ? odo - prev : null),
+      bill_attached: d.bill_attached || ((e.receipts || []).length ? "Y" : "N"),
+      other_share: r2(e.otherShare || 0),
+      my_share: r2(amount - (e.otherShare || 0)),
       litres,
       price_per_litre: ppl,
       fuel_station: d.fuel_station || "",
@@ -113,6 +118,7 @@ export function buildReportData({ expenses, members, workspaceName = "MITAK", ca
     };
   });
 
+  rows.forEach(r => { r.kms_travelled = r.kms != null ? `${Math.round(r.kms)} KM` : ""; });
   const people = paidBy ? members.filter(m => m.userId === paidBy) : members;
   const joinProfile = key => [...new Set(people.map(m => String((m.profile || {})[key] || "").trim()).filter(Boolean))].join(" / ");
   const vehicles = {};
@@ -122,6 +128,8 @@ export function buildReportData({ expenses, members, workspaceName = "MITAK", ca
 
   const header = {
     employee_name: people.map(m => m.displayName).join(" & "),
+    employee_name_caps: people.map(m => m.displayName).join(" & ").toUpperCase(),
+    signature_date: today < monthEnd(month) ? today : monthEnd(month),
     employee_id: joinProfile("employee_id"),
     designation: joinProfile("designation"),
     department: joinProfile("department"),
@@ -139,4 +147,28 @@ export function buildReportData({ expenses, members, workspaceName = "MITAK", ca
     workspace_name: workspaceName
   };
   return { rows, header, list };
+}
+
+// Who owes who: the colleague's share of what I paid, minus my share of what they paid, adjusted by
+// payments between us. net > 0: the colleague owes me; net < 0: I owe the colleague.
+export function balance(expenses, settlements, meId, otherId) {
+  let owedToMe = 0, iOwe = 0, paidToMe = 0, paidByMe = 0;
+  const shared = [];
+  for (const e of expenses) {
+    const share = +e.otherShare || 0;
+    if (!share) continue;
+    if (e.paidBy === meId) owedToMe += share;
+    else if (e.paidBy === otherId) iOwe += share;
+    else continue;
+    shared.push(e);
+  }
+  for (const s of settlements) {
+    if (s.fromUser === otherId && s.toUser === meId) paidToMe += +s.amount || 0;
+    else if (s.fromUser === meId && s.toUser === otherId) paidByMe += +s.amount || 0;
+  }
+  return {
+    net: r2(owedToMe - iOwe - paidToMe + paidByMe),
+    owedToMe: r2(owedToMe), iOwe: r2(iOwe), paidToMe: r2(paidToMe), paidByMe: r2(paidByMe),
+    shared: shared.sort(newestFirst)
+  };
 }

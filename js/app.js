@@ -4,11 +4,12 @@ import { S, me, setRenderer } from "./state.js";
 import { SupabaseBackend, DemoBackend } from "./data.js";
 import { VIEWS, TABS, VIEW_ACTIONS, onViewChange } from "./views.js";
 import { openExpense, errText } from "./expense-form.js";
-import { pickTemplate, openMappingEditor, openTemplateMenu, runReport } from "./templates-ui.js";
+import { pickTemplate, openMappingEditor, openTemplateMenu, runReport, downloadBuiltin } from "./templates-ui.js";
 import { PROFILE_FIELDS, PLACES, STATIONS, TOLL_GATES } from "./fields.js";
 import { esc, formatInvite } from "./util.js";
 import { $, ic, toast, openSheet, confirmDialog, copyText, SHEETS } from "./ui.js";
 import { refreshPushState, enablePush, disablePush, testPush, dismissBanner } from "./push.js";
+import { openBalance, openPayment } from "./balance.js";
 
 const CACHE_KEY = "mitak.cache.v1";
 const MODE_KEY = "mitak.mode";
@@ -37,7 +38,7 @@ function readCache() { try { const c = JSON.parse(localStorage.getItem(CACHE_KEY
 function writeCache() {
   if (!S.user || !S.workspace) return;
   try {
-    const s = JSON.stringify({ kind: S.backend.kind, userId: S.user.id, workspace: S.workspace, members: S.members, expenses: S.expenses, templates: S.templates, at: Date.now() });
+    const s = JSON.stringify({ kind: S.backend.kind, userId: S.user.id, workspace: S.workspace, members: S.members, expenses: S.expenses, templates: S.templates, settlements: S.settlements, at: Date.now() });
     if (s.length < 3_000_000) localStorage.setItem(CACHE_KEY, s);
   } catch (e) {}
 }
@@ -88,15 +89,15 @@ async function enter() {
   if (authMode === "recovery") { S.phase = "auth"; render(); return; }
   const cached = readCache();
   if (cached) {
-    Object.assign(S, { workspace: cached.workspace, members: cached.members, expenses: cached.expenses, templates: cached.templates || {}, phase: "app", loaded: true });
+    Object.assign(S, { workspace: cached.workspace, members: cached.members, expenses: cached.expenses, templates: cached.templates || {}, settlements: cached.settlements || [], phase: "app", loaded: true });
     render();
   } else if (S.phase !== "app") { S.phase = "loading"; render(); }
   try {
     const w = await S.backend.loadWorkspace();
     if (!w) { S.workspace = null; S.members = []; S.phase = "onboard"; clearCache(); render(); return; }
     S.workspace = w.workspace; S.members = w.members;
-    const [expenses, templates] = await Promise.all([S.backend.listExpenses(), S.backend.listTemplates()]);
-    S.expenses = expenses; S.templates = templates; S.loaded = true; S.phase = "app";
+    const [expenses, templates, settlements] = await Promise.all([S.backend.listExpenses(), S.backend.listTemplates(), listSettlements()]);
+    S.expenses = expenses; S.templates = templates; S.settlements = settlements; S.loaded = true; S.phase = "app";
     writeCache(); render();
     if (unsub) unsub();
     unsub = S.backend.subscribe(onRemoteChange);
@@ -116,6 +117,12 @@ function leave() {
   authMode = "signin"; authErrMsg = ""; render();
 }
 
+// Payments need the updated database (schema.sql run again); until then MITAK works without them.
+async function listSettlements() {
+  try { return await S.backend.listSettlements(); }
+  catch (e) { if (e.code === "offline" || e.code === "session_expired") throw e; return []; }
+}
+
 // When the colleague saves something, refresh quietly.
 let refreshTimer = null, refreshing = false;
 function onRemoteChange() {
@@ -129,7 +136,7 @@ async function refreshData() {
     const w = await S.backend.loadWorkspace();
     if (!w) { await enter(); return; }
     S.workspace = w.workspace; S.members = w.members;
-    [S.expenses, S.templates] = await Promise.all([S.backend.listExpenses(), S.backend.listTemplates()]);
+    [S.expenses, S.templates, S.settlements] = await Promise.all([S.backend.listExpenses(), S.backend.listTemplates(), listSettlements()]);
     writeCache(); render();
   } catch (e) { /* stay on what we have */ }
   finally { refreshing = false; }
@@ -411,6 +418,9 @@ const ACT = {
   "tpl-upload": b => pickTemplate(b.dataset.cat),
   "tpl-edit": b => openMappingEditor(b.dataset.cat),
   "tpl-menu": b => openTemplateMenu(b.dataset.cat),
+  "tpl-builtin": b => downloadBuiltin(b.dataset.cat),
+  "open-balance": () => openBalance(),
+  "record-payment": () => openPayment(),
   "change-password": () => changePassword(),
   "leave-demo": () => {
     try { localStorage.removeItem(MODE_KEY); } catch (e) {}

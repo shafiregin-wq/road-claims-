@@ -42,7 +42,7 @@ test("finds the table, headings and label cells in a typical fuel form", async (
   assert.equal(ins.lastDataRow, 16);
   const m = mappingFromInspection(ins);
   assert.deepEqual(m.columns, { row_number: "A", expense_date: "B", vehicle: "C", fuel_station: "D", odometer: "E", litres: "F", price_per_litre: "G", amount: "H" });
-  assert.deepEqual(m.cells, { C3: "employee_name", H3: "month_label", C4: "employee_id", H4: "vehicle" });
+  assert.deepEqual(m.cells, { C3: "employee_name", H3: "month_label", C4: "employee_id", H4: "vehicle", B20: "employee_name_caps" });
 });
 
 test("fills a template in place and keeps its look and formulas", async () => {
@@ -156,6 +156,35 @@ test("plain workbook when no template is uploaded", async () => {
   const ws = (await loadWorkbook(ExcelJS, await buildPlainWorkbook(ExcelJS, data, DEFAULT_COLUMNS.fuel, "Fuel"))).worksheets[0];
   assert.equal(ws.getCell("A5").value, "Row number (1, 2, 3…)".replace(/ \(.*\)$/, ""));
   assert.equal(ws.getCell("B6").value.toISOString().slice(0, 10), "2026-10-01");
-  const amountCol = DEFAULT_COLUMNS.fuel.indexOf("amount") + 1;
-  assert.match(ws.getRow(11).getCell(amountCol).formula, /^SUM\(J6:J10\)$/);
+  const amountCol = DEFAULT_COLUMNS.fuel.indexOf("amount") + 1, L = String.fromCharCode(64 + amountCol);
+  assert.equal(ws.getRow(11).getCell(amountCol).formula, `SUM(${L}6:${L}10)`);
+});
+
+test("the company fuel claim form, built in", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { BUILTIN_TEMPLATES } = await import("../../js/fields.js");
+  const tpl = await readFile(new URL("../../templates/fuel-claim-form.xlsx", import.meta.url));
+  const regin = { userId: "r", displayName: "Regin Shafi", role: "owner", profile: { employee_id: "915040", designation: "Field Network Engineer" } };
+  const list = [
+    { id: "1", category: "fuel", amount: 150, date: "2026-09-04", paidBy: "r", details: { site_type: "Deployment", kms: 520, bill_attached: "Y" }, receipts: [] },
+    { id: "2", category: "fuel", amount: 200, date: "2026-09-12", paidBy: "r", description: "September AEP visits", details: { site_type: "AEP Client Site", kms: 580 }, receipts: [{ path: "x" }] },
+    { id: "3", category: "fuel", amount: 50, date: "2026-09-21", paidBy: "r", details: { site_type: "Deployment", kms: 70, bill_attached: "N" }, receipts: [] },
+    { id: "4", category: "fuel", amount: 99, date: "2026-09-22", paidBy: "a", details: {}, receipts: [] }
+  ];
+  const data = buildReportData({ expenses: list, members: [regin, { userId: "a", displayName: "Ashkar", profile: {} }], category: "fuel", month: "2026-09", paidBy: "r", today: "2026-10-02" });
+  const ws = (await loadWorkbook(ExcelJS, await fillTemplate(ExcelJS, tpl, BUILTIN_TEMPLATES.fuel.mapping, data))).getWorksheet("Fuel Expense Claim");
+  assert.equal(ws.getCell("C6").value, "Regin Shafi");
+  assert.equal(ws.getCell("E6").value, "Field Network Engineer");
+  assert.equal(ws.getCell("C7").value, "915040");
+  assert.deepEqual([1, 2, 3].map(i => ws.getCell(`B${12 + i}`).value), [1, 2, 3]);
+  assert.equal(ws.getCell("C13").value.toISOString().slice(0, 10), "2026-09-04");
+  assert.equal(ws.getCell("C13").numFmt, "dd-mmm-yyyy");
+  assert.deepEqual(["D", "E", "G", "H", "I"].map(c => ws.getCell(`${c}14`).value), ["AEP Client Site", 200, "580 KM", "Y", "September AEP visits"]);
+  assert.equal(ws.getCell("H15").value, "N");
+  assert.equal(ws.getCell("E16").value, null, "Ashkar's fuel is not on Regin's form");
+  assert.equal(ws.getCell("F13").formula, 'IF(E13="","",IF(D13="Deployment",E13*0.5,E13))', "reimbursable amount stays a formula");
+  assert.equal(ws.getCell("F21").formula, "SUM(F13:F20)");
+  assert.equal(ws.getCell("C25").value, "REGIN SHAFI");
+  assert.equal(ws.getCell("H25").value, "Date: 30-Sep-2026");
+  assert.equal(ws.getCell("B2").value, "FUEL EXPENSE CLAIM FORM");
 });

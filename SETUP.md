@@ -67,7 +67,12 @@ From then on the workspace is closed: the code no longer works and nobody else c
 
 ## 6. Reimbursement templates
 
-When you have the company's Excel forms:
+**Fuel** already uses the company's fuel claim form (built in): Reports › Fuel › **Generate Excel**
+fills in your name, designation and employee ID (from Settings › Your details), one row per fuel
+expense with Site / Type, amount, KMs travelled and Bill attached, and the form's own formulas work out
+the reimbursable amount (half for Deployment, full for AEP Client Site) and the total.
+
+For the other types, when you have the company's Excel forms:
 
 1. **Settings** › **Reimbursement templates** › **Upload** next to Fuel, Toll or Parking (Food too, if there's a form for it).
 2. MITAK finds the table of headings and suggests where each value goes. Check the columns, change any that are wrong, and **Save mapping**. **Try with …** makes a test file from the current month so you can open it in Excel and check.
@@ -97,6 +102,14 @@ Then each of you, on your own phone:
 
 **Send a test** in the same place checks that it works. A notification appears for the other person
 each time one of you adds an expense (not for edits or deletions).
+
+## Updating MITAK
+
+When an update changes the database (the release notes say so), run
+[`supabase/schema.sql`](supabase/schema.sql) again in the **SQL Editor**: select all, delete, paste the new
+file, **Run**. Your data stays. If the update changes the notification function, open **Edge Functions** ›
+`notify` › **Code**, replace it with the new
+[`supabase/functions/notify/index.ts`](supabase/functions/notify/index.ts) and **Deploy**.
 
 ## Good to know
 

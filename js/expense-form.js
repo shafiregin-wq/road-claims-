@@ -18,6 +18,8 @@ export const ERRORS = {
   offline: "You’re offline. Connect to the internet and try again.",
   session_expired: "You’ve been signed out. Sign in again and retry.",
   MITAK_PAID_BY_NOT_MEMBER: "“Paid by” must be one of the two members.",
+  not_owner: "Only the person who paid can change or delete this expense.",
+  bad_split: "The shares must add up to the amount.",
   rate_limited: "Too many requests right now. Wait a minute and try again."
 };
 export const errText = (e, fallback) => ERRORS[e && e.code] || fallback || "Something went wrong. Try again.";
@@ -39,23 +41,74 @@ function rememberedValue(key) {
 }
 function fillRemembered(F) {
   for (const f of DETAIL_FIELDS[F.category] || []) {
-    if (f.remember && !F.details[f.key]) { const v = rememberedValue(f.key); if (v) F.details[f.key] = v; }
+    if (F.details[f.key]) continue;
+    const v = f.remember ? rememberedValue(f.key) : "";
+    if (v) F.details[f.key] = v;
+    else if (f.initial) F.details[f.key] = f.initial;
   }
+}
+// Fuel for a "Deployment" is shared half each (as on the fuel claim form); a client-site trip isn't.
+function splitFromSite(F) {
+  if (F.category !== "fuel" || F._splitTouched || !colleague()) return;
+  if (F.details.site_type === "Deployment") F.split = "equal";
+  else if (F.details.site_type) F.split = "none";
+}
+const shareOf = F => {
+  const a = num(F.amount) || 0;
+  if (F.split === "equal") return r2(a / 2);
+  if (F.split === "custom") { const v = num(F.otherShare); return v == null || isNaN(v) ? NaN : r2(v); }
+  return 0;
+};
+function detailInput(f, F) {
+  const v = F.details[f.key] ?? "";
+  if (f.type === "choice") {
+    return `<div class="field full"><span class="lbl">${f.label}</span><div class="seg" role="group" aria-label="${esc(f.label)}">${f.options.map(o =>
+      `<button class="chip" data-detail="${f.key}" data-v="${esc(o)}" aria-pressed="${v === o}">${esc((f.optionLabels || {})[o] || o)}</button>`).join("")}</div></div>`;
+  }
+  return `<div class="field"><label class="lbl" for="d-${f.key}">${f.label}${f.unit ? ` <em>${f.unit}</em>` : ""}</label>
+    <input id="d-${f.key}" data-d="${f.key}" ${f.type === "number" ? `type="text" inputmode="decimal"` : `type="text"`} ${f.list ? `list="${f.list}"` : ""} placeholder="${esc(f.placeholder || "")}" value="${esc(v)}"></div>`;
+}
+
+// Someone else's expense: shown, not editable.
+function viewExpense(e) {
+  const c = CAT[e.category] || { label: e.category, emoji: "" };
+  const owner = memberName(e.paidBy);
+  const sh = openSheet(`${c.emoji} ${c.label} · ${owner}`, { small: true });
+  sh.el.dataset.testid = "expense-view";
+  const d = e.details || {};
+  const rows = [
+    ["Amount", aed(e.amount)], ["Date", fmtDate(e.date) + (e.time ? " · " + e.time : "")], ["Paid by", owner],
+    ...(e.otherShare > 0 ? [["Your share", aed(e.otherShare)], [`${owner}’s share`, aed(e.amount - e.otherShare)]] : []),
+    ["Note", e.description], ["Trip", e.trip], ["Location", e.location],
+    ...(DETAIL_FIELDS[e.category] || []).map(f => [f.label, d[f.key] != null && d[f.key] !== "" ? `${(f.optionLabels || {})[d[f.key]] || d[f.key]}${f.unit && f.type === "number" ? " " + f.unit : ""}` : ""])
+  ].filter(([, v]) => v);
+  sh.body.innerHTML = `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    ${(e.receipts || []).length ? `<div class="row-btns">${e.receipts.map((r, i) => `<button class="btn small" data-open="${esc(r.path)}">${ic("clip", 16)} Receipt ${i + 1}</button>`).join("")}</div>` : ""}
+    <p class="hint">${ic("lock", 14)} Only ${esc(owner)} can change or delete this expense.</p>`;
+  sh.body.addEventListener("click", async ev => {
+    const b = ev.target.closest("[data-open]"); if (!b) return;
+    const w = window.open("", "_blank");
+    try { const u = await S.backend.fileUrl(b.dataset.open); if (w) w.location = u; else location.href = u; } catch (err) { if (w) w.close(); toast("Couldn’t open the receipt.", "bad"); }
+  });
 }
 
 export function openExpense(id, preset = {}) {
   const existing = id ? S.expenses.find(e => e.id === id) : null;
   if (id && !existing) { toast("That expense no longer exists.", "bad"); return; }
+  if (existing && existing.paidBy !== S.user.id) { viewExpense(existing); return; }
   let restored = false;
   let F;
   if (existing) F = structuredClone(existing);
   else {
     const d = readDraft();
     if (d && d.id && !S.expenses.some(e => e.id === d.id) && !preset.date) { F = d; restored = true; }
-    else F = { id: uid(), category: preset.category || "", amount: "", date: preset.date || todayISO(), time: nowTime(), paidBy: S.user.id, description: "", location: "", trip: "", details: {}, receipts: [] };
+    else F = { id: uid(), category: preset.category || "", amount: "", date: preset.date || todayISO(), time: nowTime(), paidBy: S.user.id, description: "", location: "", trip: "", details: {}, receipts: [], split: "none", otherShare: "" };
   }
   F.details = F.details || {}; F.receipts = F.receipts || [];
+  F.paidBy = S.user.id; F.split = F.split || "none";
   if (typeof F.amount === "number") F.amount = String(F.amount);
+  if (typeof F.otherShare === "number") F.otherShare = F.split === "custom" ? String(F.otherShare) : "";
+  if (existing) F._splitTouched = true;
   const added = [];   // new receipt files waiting to be uploaded: { blob, name, type, url }
   const removed = []; // paths of saved receipts the user took off
   let err = "", saving = false;
@@ -66,7 +119,7 @@ export function openExpense(id, preset = {}) {
   sh.onClose = () => added.forEach(a => URL.revokeObjectURL(a.url));
 
   function draw() {
-    const other = colleague(), my = me();
+    const other = colleague();
     const fields = DETAIL_FIELDS[F.category] || [];
     const c = CAT[F.category];
     const detailsOpen = F.category === "fuel" || fields.some(f => F.details[f.key]);
@@ -82,18 +135,11 @@ export function openExpense(id, preset = {}) {
         <div class="field"><label class="lbl" for="e-date">Date</label><input id="e-date" data-f="date" type="date" max="${todayISO()}" value="${esc(F.date)}"></div>
         <div class="field"><label class="lbl" for="e-time">Time</label><input id="e-time" data-f="time" type="time" value="${esc(F.time || "")}"></div>
       </div>
-      <div class="field"><span class="lbl">Paid by</span>
-        <div class="seg two" role="group" aria-label="Paid by">
-          <button class="chip" data-pick="paidBy" data-v="${esc(S.user.id)}" aria-pressed="${F.paidBy === S.user.id}">Me${my ? ` <span class="muted-in">(${esc(my.displayName)})</span>` : ""}</button>
-          ${other ? `<button class="chip" data-pick="paidBy" data-v="${esc(other.userId)}" aria-pressed="${F.paidBy === other.userId}">${esc(other.displayName)}</button>` : ""}
-          ${F.paidBy !== S.user.id && (!other || F.paidBy !== other.userId) ? `<button class="chip" aria-pressed="true" disabled>${esc(memberName(F.paidBy))}</button>` : ""}
-        </div>
-      </div>
+      ${other ? `<div class="field" id="e-split"></div>` : ""}
       <div class="field"><label class="lbl" for="e-desc">Description / note <em>optional</em></label><input id="e-desc" data-f="description" maxlength="500" placeholder="${esc(PLACEHOLDER[F.category] || "e.g. ADNOC, Salik, Lunch")}" value="${esc(F.description)}"></div>
       <div class="field" id="e-receipts"></div>
       ${fields.length ? `<details class="more" ${detailsOpen ? "open" : ""}><summary>${esc(c.label)} details <em>optional</em></summary><div class="inner">
-        <div class="g2">${fields.map(f => `<div class="field"><label class="lbl" for="d-${f.key}">${f.label}${f.unit ? ` <em>${f.unit}</em>` : ""}</label>
-          <input id="d-${f.key}" data-d="${f.key}" ${f.type === "number" ? `type="text" inputmode="decimal"` : `type="text"`} ${f.list ? `list="${f.list}"` : ""} placeholder="${esc(f.placeholder || "")}" value="${esc(F.details[f.key] ?? "")}"></div>`).join("")}</div>
+        <div class="g2">${fields.map(f => detailInput(f, F)).join("")}</div>
         <p class="hint" id="e-calc"></p>
       </div></details>` : ""}
       <details class="more" ${F.trip || F.location ? "open" : ""}><summary>Trip & location <em>optional</em></summary><div class="inner">
@@ -104,7 +150,20 @@ export function openExpense(id, preset = {}) {
       </div></details>
       ${existing ? `<p class="hint">Added by ${esc(memberName(existing.createdBy))}${existing.createdAt ? " on " + fmtDate(String(existing.createdAt).slice(0, 10)) : ""}${existing.updatedBy && existing.updatedAt && existing.updatedAt !== existing.createdAt ? ` · last changed by ${esc(memberName(existing.updatedBy))} on ${fmtDate(String(existing.updatedAt).slice(0, 10))}` : ""}</p>` : ""}
       <p class="err" id="e-err" role="alert">${esc(err)}</p>`;
-    drawReceipts(); drawCalc(); drawFoot();
+    drawSplit(); drawReceipts(); drawCalc(); drawFoot();
+  }
+
+  function drawSplit() {
+    const box = $("#e-split", sh.body), other = colleague(); if (!box || !other) return;
+    const a = num(F.amount) || 0, share = shareOf(F), name = esc(other.displayName);
+    const opt = (v, label) => `<button class="chip" data-split="${v}" aria-pressed="${F.split === v}">${label}</button>`;
+    box.innerHTML = `<span class="lbl">Shared with ${name}?</span>
+      <div class="seg" role="group" aria-label="Shared with ${name}">${opt("none", "Not shared")}${opt("equal", "Half each")}${opt("custom", "Custom")}</div>
+      ${F.split === "custom" ? `<div class="g2">
+        <div class="field"><label class="lbl" for="e-mine">My share</label><input id="e-mine" data-share="mine" type="text" inputmode="decimal" placeholder="0.00" value="${isNaN(share) || !a ? "" : r2(a - share)}"></div>
+        <div class="field"><label class="lbl" for="e-theirs">${name}’s share</label><input id="e-theirs" data-share="theirs" type="text" inputmode="decimal" placeholder="0.00" value="${esc(F.otherShare)}"></div>
+      </div>` : ""}
+      <span class="hint" id="e-split-hint">${F.split === "none" ? "" : a > 0 && !isNaN(share) ? `${name} owes you <b>${aed(share)}</b> for this.` : "Enter the amount to see what " + name + " owes you."}</span>`;
   }
 
   function drawReceipts() {
@@ -134,11 +193,25 @@ export function openExpense(id, preset = {}) {
 
   sh.body.addEventListener("input", ev => {
     const el = ev.target;
+    if (el.dataset.share) {
+      const a = num(F.amount) || 0, v = num(el.value);
+      if (el.dataset.share === "theirs") { F.otherShare = el.value; const m = $("#e-mine", sh.body); if (m) m.value = v != null && !isNaN(v) && a ? r2(a - v) : ""; }
+      else { F.otherShare = v != null && !isNaN(v) ? String(r2(a - v)) : ""; const t = $("#e-theirs", sh.body); if (t) t.value = F.otherShare; }
+      updateSplitHint(); persist(); return;
+    }
     if (el.dataset.f) F[el.dataset.f] = el.value;
     else if (el.dataset.d) F.details[el.dataset.d] = el.value;
     else return;
+    if (el.dataset.f === "amount") updateSplitHint();
     drawCalc(); persist();
   });
+  function updateSplitHint() {
+    const h = $("#e-split-hint", sh.body), other = colleague(); if (!h || !other) return;
+    const a = num(F.amount) || 0, share = shareOf(F);
+    h.innerHTML = F.split === "none" ? "" : a > 0 && !isNaN(share) ? `${esc(other.displayName)} owes you <b>${aed(share)}</b> for this.` : `Enter the amount to see what ${esc(other.displayName)} owes you.`;
+    const m = $("#e-mine", sh.body);
+    if (m && document.activeElement !== m) { const v = num(F.otherShare); m.value = v != null && !isNaN(v) && a ? r2(a - v) : ""; }
+  }
   sh.body.addEventListener("change", async ev => {
     const el = ev.target;
     if (el.hasAttribute("data-file") && el.files && el.files.length) {
@@ -154,11 +227,23 @@ export function openExpense(id, preset = {}) {
   });
   sh.body.addEventListener("click", async ev => {
     const b = ev.target.closest("button"); if (!b || !sh.body.contains(b)) return;
+    if (b.dataset.split) {
+      ev.preventDefault();
+      F.split = b.dataset.split; F._splitTouched = true; err = "";
+      if (F.split === "custom" && !F.otherShare) { const a = num(F.amount); if (a > 0) F.otherShare = String(r2(a / 2)); }
+      persist(); drawSplit(); return;
+    }
+    if (b.dataset.detail) {
+      ev.preventDefault();
+      F.details[b.dataset.detail] = b.dataset.v;
+      if (b.dataset.detail === "site_type") splitFromSite(F);
+      persist(); draw(); return;
+    }
     if (b.dataset.pick) {
       ev.preventDefault();
       F[b.dataset.pick] = b.dataset.v;
       err = "";
-      if (b.dataset.pick === "category") fillRemembered(F);
+      if (b.dataset.pick === "category") { fillRemembered(F); splitFromSite(F); }
       persist(); draw();
       if (b.dataset.pick === "category" && !num(F.amount)) $("#e-amount", sh.body).focus();
       return;
@@ -174,7 +259,7 @@ export function openExpense(id, preset = {}) {
       try { const u = await S.backend.fileUrl(b.dataset.open); if (w) w.location = u; else location.href = u; } catch (e) { if (w) w.close(); toast("Couldn’t open the receipt.", "bad"); }
       return;
     }
-    if (b.dataset.x === "discard") { clearDraft(); F = { id: uid(), category: "", amount: "", date: todayISO(), time: nowTime(), paidBy: S.user.id, description: "", location: "", trip: "", details: {}, receipts: [] }; restored = false; draw(); }
+    if (b.dataset.x === "discard") { clearDraft(); F = { id: uid(), category: "", amount: "", date: todayISO(), time: nowTime(), paidBy: S.user.id, description: "", location: "", trip: "", details: {}, receipts: [], split: "none", otherShare: "" }; restored = false; draw(); }
   });
   sh.foot.addEventListener("click", async ev => {
     const b = ev.target.closest("button[data-x]"); if (!b) return;
@@ -196,6 +281,11 @@ export function openExpense(id, preset = {}) {
       if (f.type !== "number") continue;
       const v = num(F.details[f.key]);
       if (v != null && (isNaN(v) || v < 0)) return `${f.label} must be a number.`;
+    }
+    if (F.split === "custom") {
+      const share = shareOf(F);
+      if (isNaN(share) || share < 0) return "Enter the colleague’s share as a number.";
+      if (share > a) return "The colleague’s share can’t be more than the amount.";
     }
     return "";
   }
@@ -228,8 +318,10 @@ export function openExpense(id, preset = {}) {
       const obj = {
         id: F.id, category: F.category, amount: r2(num(F.amount)), date: F.date, time: F.time || "", paidBy: F.paidBy || S.user.id,
         description: String(F.description || "").trim(), location: String(F.location || "").trim(), trip: String(F.trip || "").trim(),
-        details: cleanDetails(), receipts: [...F.receipts, ...uploaded]
+        details: cleanDetails(), receipts: [...F.receipts, ...uploaded],
+        split: colleague() ? F.split : "none", otherShare: colleague() ? shareOf(F) : 0
       };
+      if (!obj.otherShare) obj.split = "none";
       const saved = await S.backend.saveExpense(obj);
       if (removed.length) S.backend.deleteFiles(removed).catch(() => {});
       const i = S.expenses.findIndex(e => e.id === saved.id);

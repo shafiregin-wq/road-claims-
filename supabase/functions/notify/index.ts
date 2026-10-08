@@ -182,7 +182,7 @@ export async function handle(req: Request, env: Env): Promise<Response> {
 
     if (body.action === "expense") {
       if (!/^[0-9a-f-]{36}$/i.test(String(body.expense_id || ""))) return json({ error: "expense_id missing" }, 400);
-      const e = (await d.get(`expenses?id=eq.${body.expense_id}&workspace_id=eq.${me.workspace_id}&select=id,category,amount,description,paid_by`))[0];
+      const e = (await d.get(`expenses?id=eq.${body.expense_id}&workspace_id=eq.${me.workspace_id}&select=*`))[0];
       if (!e) return json({ error: "Expense not found" }, 404);
       const members = await d.get(`members?workspace_id=eq.${me.workspace_id}&select=user_id,display_name`);
       const others = members.filter((m: { user_id: string }) => m.user_id !== user.id);
@@ -190,9 +190,10 @@ export async function handle(req: Request, env: Env): Promise<Response> {
       let sent = 0;
       for (const o of others) {
         const paid = e.paid_by === user.id ? "" : e.paid_by === o.user_id ? " · paid by you" : payer ? ` · paid by ${payer.display_name}` : "";
+        const share = Number(e.other_share || 0) > 0 && e.paid_by !== o.user_id ? ` · your share ${money(e.other_share)}` : "";
         const message = {
           title: `${me.display_name} added an expense`,
-          body: `${CATS[e.category] || e.category} · ${money(e.amount)}${e.description ? " · " + e.description : ""}${paid}`,
+          body: `${CATS[e.category] || e.category} · ${money(e.amount)}${e.description ? " · " + e.description : ""}${paid}${share}`,
           tag: `expense-${e.id}`
         };
         sent += await deliver(env, d, [o.user_id], message, vapid);

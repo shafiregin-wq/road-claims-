@@ -10,13 +10,14 @@ export const S = {
   members: [],               // [{ userId, displayName, role, profile }]
   expenses: [],
   templates: {},             // { fuel: { fileName, filePath, mapping } }
+  settlements: [],           // payments between the two: { id, fromUser, toUser, amount, date, note, createdBy }
   loaded: false,
   view: "home",
   calMonth: monthOf(todayISO()),
   calDay: todayISO(),
   sumMonth: monthOf(todayISO()),
   repMonth: monthOf(todayISO()),
-  repWho: "",                // "" = both, otherwise a user id
+  repWho: null,              // null = only mine (default), "" = both, otherwise a user id
   xf: { month: monthOf(todayISO()), date: "", user: "", category: "", trip: "", sort: "newest" }
 };
 

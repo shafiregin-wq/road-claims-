@@ -309,7 +309,7 @@ const generalFmt = f => !f || f === "General" || f === "@";
 function writeValue(cell, value, type, opts = {}) {
   cell = master(cell);
   if (value == null || value === "") { cell.value = opts.label ? opts.label.trimEnd() : null; return; }
-  if (opts.label) { cell.value = opts.label + formatPlain(value, type); return; }
+  if (opts.label) { cell.value = opts.label + formatPlain(value, type, opts.dateFormat); return; }
   if (type === "date") {
     const d = utcDate(value);
     if (!d) { cell.value = String(value); return; }
@@ -326,8 +326,15 @@ function writeValue(cell, value, type, opts = {}) {
   }
   cell.value = String(value);
 }
-function formatPlain(value, type) {
-  if (type === "date") { const d = utcDate(value); return d ? `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}` : String(value); }
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// Dates written as text (e.g. after a label) follow the mapping's dateFormat: dd, d, mm, mmm, yyyy, yy.
+function formatPlain(value, type, dateFormat = "dd/mm/yyyy") {
+  if (type === "date") {
+    const d = utcDate(value);
+    if (!d) return String(value);
+    const day = d.getUTCDate(), mon = d.getUTCMonth(), yr = d.getUTCFullYear();
+    return dateFormat.replace(/yyyy|yy|mmm|mm|dd|d/g, t => ({ yyyy: String(yr), yy: String(yr).slice(2), mmm: MON[mon], mm: String(mon + 1).padStart(2, "0"), dd: String(day).padStart(2, "0"), d: String(day) })[t]);
+  }
   if (type === "money") return Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return String(value);
 }

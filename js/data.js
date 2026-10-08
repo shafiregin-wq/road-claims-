@@ -25,6 +25,7 @@ function toAppError(err) {
   if (/Email not confirmed/i.test(msg)) return new AppError("email_unconfirmed", msg);
   if (/already registered|already been registered|user_already_exists/i.test(msg)) return new AppError("user_exists", msg);
   if (/Database error saving new user/i.test(msg)) return new AppError("MITAK_SIGNUPS_CLOSED", msg);
+  if (/row-level security/i.test(msg)) return new AppError("not_owner", msg);
   if (/Signups not allowed|signup.*disabled/i.test(msg)) return new AppError("MITAK_SIGNUPS_CLOSED", msg);
   if (/Password should|weak.?password|at least \d+ characters/i.test(msg)) return new AppError("weak_password", msg);
   if (status === 429 || /rate limit|too many/i.test(msg)) return new AppError("rate_limited", msg);
@@ -47,13 +48,15 @@ function loadScript(src) {
 const expenseFromRow = r => ({
   id: r.id, category: r.category, amount: Number(r.amount), date: r.expense_date, time: r.expense_time ? String(r.expense_time).slice(0, 5) : "",
   paidBy: r.paid_by, createdBy: r.created_by, updatedBy: r.updated_by, description: r.description || "", location: r.location || "",
-  trip: r.trip || "", details: r.details || {}, receipts: r.receipts || [], createdAt: r.created_at, updatedAt: r.updated_at
+  trip: r.trip || "", details: r.details || {}, receipts: r.receipts || [], split: r.split || "none", otherShare: Number(r.other_share || 0),
+  createdAt: r.created_at, updatedAt: r.updated_at
 });
 const expenseToRow = (e, workspaceId) => ({
   id: e.id, workspace_id: workspaceId, category: e.category, amount: e.amount, expense_date: e.date, expense_time: e.time || null,
   paid_by: e.paidBy, description: e.description || "", location: e.location || "", trip: e.trip || "",
-  details: e.details || {}, receipts: e.receipts || []
+  details: e.details || {}, receipts: e.receipts || [], split: e.split || "none", other_share: e.split && e.split !== "none" ? e.otherShare || 0 : 0
 });
+const settlementFromRow = r => ({ id: r.id, fromUser: r.from_user, toUser: r.to_user, amount: Number(r.amount), date: r.settle_date, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at });
 const memberFromRow = r => ({ userId: r.user_id, displayName: r.display_name, role: r.role, profile: r.profile || {}, joinedAt: r.joined_at });
 const templateFromRow = r => ({ category: r.category, fileName: r.file_name || "", filePath: r.file_path || "", mapping: r.mapping || {}, updatedAt: r.updated_at, updatedBy: r.updated_by });
 
@@ -142,6 +145,16 @@ export class SupabaseBackend {
   fileBlob(path) { return guard(async () => check(await this.client.storage.from("mitak").download(this.full(path)))); }
   deleteFiles(paths) { return guard(async () => { check(await this.client.storage.from("mitak").remove(paths.map(p => this.full(p)))); }); }
 
+  // Payments between the two, to settle up who owes who.
+  listSettlements() {
+    return guard(async () => check(await this.client.from("settlements").select("*").order("settle_date", { ascending: false }).order("created_at", { ascending: false })).map(settlementFromRow));
+  }
+  saveSettlement(st) {
+    return guard(async () => settlementFromRow(check(await this.client.from("settlements")
+      .insert({ id: st.id, workspace_id: this.workspaceId, from_user: st.fromUser, to_user: st.toUser, amount: st.amount, settle_date: st.date, note: st.note || "" }).select().single())));
+  }
+  deleteSettlement(id) { return guard(async () => { check(await this.client.from("settlements").delete().eq("id", id)); }); }
+
   listTemplates() {
     return guard(async () => Object.fromEntries(check(await this.client.from("report_templates").select("*")).map(r => [r.category, templateFromRow(r)])));
   }
@@ -161,6 +174,7 @@ export class SupabaseBackend {
       .on("postgres_changes", { event: "*", schema: "public", table: "expenses", filter: f }, p => onChange("expenses", p))
       .on("postgres_changes", { event: "*", schema: "public", table: "members", filter: f }, p => onChange("members", p))
       .on("postgres_changes", { event: "*", schema: "public", table: "report_templates", filter: f }, p => onChange("templates", p))
+      .on("postgres_changes", { event: "*", schema: "public", table: "settlements", filter: f }, p => onChange("settlements", p))
       .on("postgres_changes", { event: "*", schema: "public", table: "workspaces", filter: `id=eq.${this.workspaceId}` }, p => onChange("members", p))
       .subscribe();
     return () => this.unsubscribe();
@@ -310,10 +324,16 @@ export class DemoBackend {
   async saveExpense(e) {
     await this.tick();
     if (!this.db.members.some(m => m.userId === e.paidBy)) throw new AppError("MITAK_PAID_BY_NOT_MEMBER");
+    const before = this.db.expenses.find(x => x.id === e.id);
+    // Same rules as the database: only your own expenses.
+    if (e.paidBy !== this.userId || (before && before.paidBy !== this.userId)) throw new AppError("not_owner");
+    const share = e.split && e.split !== "none" ? Math.round(+e.otherShare * 100) / 100 : 0;
+    if (share < 0 || share > +e.amount) throw new AppError("bad_split");
     return this.mutate(db => {
       const now = new Date().toISOString();
       const i = db.expenses.findIndex(x => x.id === e.id);
       const prev = i >= 0 ? db.expenses[i] : null;
+      e = { ...e, split: e.split || "none", otherShare: share };
       const saved = { ...e, amount: Math.round(+e.amount * 100) / 100, createdBy: prev ? prev.createdBy : this.userId, createdAt: prev ? prev.createdAt : now, updatedBy: this.userId, updatedAt: now };
       if (i >= 0) db.expenses[i] = saved; else db.expenses.push(saved);
       return { ...saved };
@@ -321,6 +341,8 @@ export class DemoBackend {
   }
   async deleteExpense(e) {
     await this.tick();
+    const cur = this.db.expenses.find(x => x.id === e.id);
+    if (cur && cur.paidBy !== this.userId) throw new AppError("not_owner");
     this.mutate(db => { db.expenses = db.expenses.filter(x => x.id !== e.id); });
     await this.deleteFiles((e.receipts || []).map(r => r.path).filter(Boolean)).catch(() => {});
   }
@@ -336,6 +358,18 @@ export class DemoBackend {
     this.urls.set(path, u); return u;
   }
   async deleteFiles(paths) { for (const p of paths) await idb.run("readwrite", s => s.delete(p)); }
+  async listSettlements() { return (this.db.settlements || []).map(x => ({ ...x })); }
+  async saveSettlement(st) {
+    await this.tick();
+    if (st.fromUser === st.toUser) throw new AppError("MITAK_SAME_PERSON");
+    if (![st.fromUser, st.toUser].includes(this.userId)) throw new AppError("not_owner");
+    return this.mutate(db => { const saved = { ...st, amount: Math.round(+st.amount * 100) / 100, createdBy: this.userId, createdAt: new Date().toISOString() }; (db.settlements ||= []).push(saved); return { ...saved }; });
+  }
+  async deleteSettlement(id) {
+    const cur = (this.db.settlements || []).find(x => x.id === id);
+    if (cur && cur.createdBy !== this.userId) throw new AppError("not_owner");
+    this.mutate(db => { db.settlements = (db.settlements || []).filter(x => x.id !== id); });
+  }
   async listTemplates() { return { ...(this.db.templates || {}) }; }
   async saveTemplate(category, t) {
     return this.mutate(db => { db.templates = db.templates || {}; db.templates[category] = { category, fileName: t.fileName, filePath: t.filePath, mapping: t.mapping || {}, updatedAt: new Date().toISOString(), updatedBy: this.userId }; return db.templates[category]; });
@@ -362,6 +396,7 @@ export function seedDemo(today = todayISO()) {
   const add = (date, paidBy, category, amount, extra = {}) => ex.push({
     id: uid(), category, amount, date, time: extra.time || "09:30", paidBy, createdBy: paidBy, updatedBy: paidBy,
     description: extra.description || "", location: extra.location || "", trip: extra.trip || "", details: extra.details || {}, receipts: [],
+    split: extra.split || "none", otherShare: extra.split === "equal" ? Math.round(amount * 50) / 100 : extra.otherShare || 0,
     createdAt: `${date}T09:30:00.000Z`, updatedAt: `${date}T09:30:00.000Z`
   });
   const plan = [
@@ -374,17 +409,17 @@ export function seedDemo(today = todayISO()) {
     if (who === "together") {
       const trip = d % 2 ? "Abu Dhabi → Dubai" : "Abu Dhabi → Ruwais";
       odo1 += 380;
-      add(date, u1, "fuel", 150 + (d % 4) * 12.5, { trip, time: "07:10", description: "ADNOC", details: { vehicle: "Plate A 12345", odometer: odo1, litres: 52.6, fuel_station: "ADNOC" } });
+      add(date, u1, "fuel", 150 + (d % 4) * 12.5, { trip, time: "07:10", description: "ADNOC", split: "equal", details: { site_type: "Deployment", kms: 380, bill_attached: "Y", vehicle: "Plate A 12345", odometer: odo1, litres: 52.6, fuel_station: "ADNOC" } });
       add(date, u1, "toll", 8, { trip, time: "07:55", description: "Salik", details: { toll_gate: "Salik – Al Safa", vehicle: "Plate A 12345" } });
-      add(date, u2, "food", 45 + (d % 3) * 10, { trip, time: "13:20", description: "Lunch" });
+      add(date, u2, "food", 60, { trip, time: "13:20", description: "Lunch for both", split: "custom", otherShare: 25 + (d % 3) * 5 });
       add(date, u2, "parking", 20, { trip, time: "10:05", description: "Site parking", location: trip.endsWith("Dubai") ? "Dubai" : "Ruwais", details: { duration: "4 hours" } });
     } else if (who === "u1") {
       odo1 += 160;
-      add(date, u1, "fuel", 120, { time: "18:40", description: "ENOC", details: { vehicle: "Plate A 12345", odometer: odo1, litres: 41.2, fuel_station: "ENOC" } });
+      add(date, u1, "fuel", 120, { time: "18:40", description: "ENOC", details: { site_type: "AEP Client Site", kms: 160, bill_attached: "Y", vehicle: "Plate A 12345", odometer: odo1, litres: 41.2, fuel_station: "ENOC" } });
       add(date, u1, "parking", 15, { time: "11:00", description: "Mawaqif", location: "Abu Dhabi", details: { duration: "3 hours" } });
     } else {
       odo2 += 210;
-      add(date, u2, "fuel", 135.5, { time: "08:05", description: "ADNOC", details: { vehicle: "Plate B 67890", odometer: odo2, litres: 46.4, fuel_station: "ADNOC" } });
+      add(date, u2, "fuel", 135.5, { time: "08:05", description: "ADNOC", details: { site_type: "AEP Client Site", kms: 210, bill_attached: "Y", vehicle: "Plate B 67890", odometer: odo2, litres: 46.4, fuel_station: "ADNOC" } });
       add(date, u2, "food", 32, { time: "13:00", description: "Lunch" });
     }
   }
@@ -397,6 +432,7 @@ export function seedDemo(today = todayISO()) {
       { userId: u2, displayName: "Omar", role: "member", profile: { vehicle: "Plate B 67890" }, joinedAt: `${prev}-01T08:05:00.000Z` }
     ],
     expenses: ex,
+    settlements: [{ id: uid(), fromUser: u2, toUser: u1, amount: 100, date: `${prev}-28`, note: "Cash", createdBy: u2, createdAt: `${prev}-28T18:00:00.000Z` }],
     templates: {}
   };
 }
