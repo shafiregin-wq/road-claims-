@@ -1,14 +1,16 @@
-// Road Claims service worker: keeps the app working offline.
-const VERSION = "road-claims-v1";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
-const LIBS = [
-  "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+// MITAK service worker: lets the installed app open without a connection.
+// App files: newest from the network, saved copy when offline. Libraries from the CDN are
+// versioned, so the saved copy is used. Supabase (accounts, data, receipts) is never cached here.
+const VERSION = "mitak-v1";
+const SHELL = [
+  "./", "./index.html", "./app.css", "./config.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png",
+  "./js/app.js", "./js/data.js", "./js/excel.js", "./js/expense-form.js", "./js/fields.js", "./js/reports.js",
+  "./js/state.js", "./js/templates-ui.js", "./js/ui.js", "./js/util.js", "./js/views.js"
 ];
-// Live services are never cached: maps routing, place search and receipt reading.
-const LIVE = /(^|\.)anthropic\.com$|nominatim\.openstreetmap\.org$|router\.project-osrm\.org$/;
-const CACHEABLE = /(^|\.)(jsdelivr\.net|cloudflare\.com|gstatic\.com|googleapis\.com)$/;
+const LIBS = [
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.js",
+  "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"
+];
 
 self.addEventListener("install", event => {
   event.waitUntil((async () => {
@@ -30,26 +32,23 @@ self.addEventListener("fetch", event => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  if (LIVE.test(url.hostname)) return;
-
-  // Pages: try the network for the newest version, fall back to the saved copy offline.
-  if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req).then(res => {
-        if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put("./index.html", copy)); }
+  if (url.origin === self.location.origin) {
+    event.respondWith((async () => {
+      const cache = await caches.open(VERSION);
+      try {
+        const res = await fetch(req, { cache: "no-cache" });
+        if (res.ok) cache.put(req.mode === "navigate" ? "./index.html" : req, res.clone());
         return res;
-      }).catch(() => caches.match("./index.html"))
-    );
+      } catch (e) {
+        return (await cache.match(req.mode === "navigate" ? "./index.html" : req, { ignoreSearch: req.mode === "navigate" })) || Response.error();
+      }
+    })());
     return;
   }
-
-  // Everything else: saved copy first, then network (and save it for next time).
-  event.respondWith(
-    caches.match(req).then(hit => hit || fetch(req).then(res => {
-      if (res.ok && (url.origin === self.location.origin || CACHEABLE.test(url.hostname))) {
-        const copy = res.clone(); caches.open(VERSION).then(c => c.put(req, copy));
-      }
+  if (url.hostname === "cdn.jsdelivr.net") {
+    event.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
+      if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(req, copy)); }
       return res;
-    }))
-  );
+    })));
+  }
 });
