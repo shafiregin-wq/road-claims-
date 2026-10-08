@@ -20,9 +20,11 @@ export const ERRORS = {
   MITAK_PAID_BY_NOT_MEMBER: "“Paid by” must be one of the two members.",
   not_owner: "Only the person who paid can change or delete this expense.",
   bad_split: "The shares must add up to the amount.",
+  db_update_needed: "MITAK’s database needs an update. In Supabase › SQL Editor, run supabase/schema.sql again (select all, delete, paste the new file, Run), then try again.",
   rate_limited: "Too many requests right now. Wait a minute and try again."
 };
-export const errText = (e, fallback) => ERRORS[e && e.code] || fallback || "Something went wrong. Try again.";
+export const errText = (e, fallback) => ERRORS[e && e.code]
+  || `${fallback || "Something went wrong. Try again."}${e && e.code === "error" && e.message ? ` (${String(e.message).slice(0, 140)})` : ""}`;
 
 function recentTrips() {
   const seen = new Set(), out = [];

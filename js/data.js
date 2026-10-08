@@ -26,6 +26,8 @@ function toAppError(err) {
   if (/already registered|already been registered|user_already_exists/i.test(msg)) return new AppError("user_exists", msg);
   if (/Database error saving new user/i.test(msg)) return new AppError("MITAK_SIGNUPS_CLOSED", msg);
   if (/row-level security/i.test(msg)) return new AppError("not_owner", msg);
+  // The app is newer than the database: schema.sql needs running again.
+  if (/PGRST20[45]|Could not find the .* (column|table)|schema cache|column .* does not exist|relation .* does not exist/i.test(msg) || /PGRST20[45]|42703|42P01/.test(String(err && err.code))) return new AppError("db_update_needed", msg);
   if (/Signups not allowed|signup.*disabled/i.test(msg)) return new AppError("MITAK_SIGNUPS_CLOSED", msg);
   if (/Password should|weak.?password|at least \d+ characters/i.test(msg)) return new AppError("weak_password", msg);
   if (status === 429 || /rate limit|too many/i.test(msg)) return new AppError("rate_limited", msg);
