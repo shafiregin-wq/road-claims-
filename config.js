@@ -6,6 +6,6 @@
 //
 // Leave them empty to see the set-up screen with the on-device demo.
 window.MITAK_CONFIG = {
-  supabaseUrl: "",
-  supabaseAnonKey: ""
+  supabaseUrl: "https://lgyoqcblgtgvxitiunod.supabase.co",
+  supabaseAnonKey: "sb_publishable_JywSs9ZrbTKaX9Daf7Ah6w_vXtLXl4H"
 };

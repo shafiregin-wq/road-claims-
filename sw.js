@@ -1,7 +1,7 @@
 // MITAK service worker: lets the installed app open without a connection.
 // App files: newest from the network, saved copy when offline. Libraries from the CDN are
 // versioned, so the saved copy is used. Supabase (accounts, data, receipts) is never cached here.
-const VERSION = "mitak-v1";
+const VERSION = "mitak-v2";
 const SHELL = [
   "./", "./index.html", "./app.css", "./config.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png",
   "./js/app.js", "./js/data.js", "./js/excel.js", "./js/expense-form.js", "./js/fields.js", "./js/reports.js",
