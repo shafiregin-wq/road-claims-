@@ -8,7 +8,7 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createECDH, randomBytes } from "node:crypto";
@@ -294,4 +294,21 @@ test("two colleagues on a real Supabase stack", async () => {
   await b.click("#auth-form [type=submit]");
   await b.waitForSelector(".hello");
   assert.deepEqual(errors, []);
+});
+
+test("a database that hasn't been updated says so clearly", async () => {
+  const sql = join(dataDir, "old-db.sql");
+  writeFileSync(sql, "alter table public.expenses drop column other_share cascade; notify pgrst, 'reload schema';");
+  psql(sql);
+  const a = await person();
+  await a.goto(app.url);
+  await a.fill("#a-email", "shafi@example.com");
+  await a.fill("#a-pass", "test-password-1");
+  await a.click("#auth-form [type=submit]");
+  await a.waitForSelector(".hello");
+  await a.click(".add-main");
+  await a.click("[data-pick=category][data-v=food]");
+  await a.fill("#e-amount", "10");
+  await a.click("[data-x=save]");
+  assert.match(await errText(a, "#e-err"), /database needs an update.*schema\.sql/);
 });
