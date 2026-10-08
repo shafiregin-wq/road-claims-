@@ -1,0 +1,18 @@
+{
+  "name": "mitak",
+  "private": true,
+  "description": "MITAK: shared travel expense tracker for two colleagues. The app itself needs no build step; these packages are only for the tests.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:sql": "bash tests/sql/run.sh",
+    "test:e2e": "node --test tests/e2e/run.mjs",
+    "serve": "npx http-server -p 8080 -c-1 .",
+    "test:supabase": "node --test tests/supabase-local/run.mjs"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "2.112.4",
+    "exceljs": "4.4.0",
+    "jszip": "3.10.1"
+  }
+}
