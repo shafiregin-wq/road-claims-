@@ -1,7 +1,7 @@
 // Reimbursement templates: upload, field mapping editor, and generating the monthly Excel files.
 
 import { S, memberName, rerender } from "./state.js";
-import { CAT, ROW_FIELDS, HEADER_FIELDS, DEFAULT_COLUMNS } from "./fields.js";
+import { CAT, ROW_FIELDS, HEADER_FIELDS, DEFAULT_COLUMNS, BUILTIN_TEMPLATES } from "./fields.js";
 import { buildReportData } from "./reports.js";
 import { loadWorkbook, inspectTemplate, mappingFromInspection, fillTemplate, buildPlainWorkbook, splitRef, colToNum } from "./excel.js";
 import { esc, aed, monthLabel, fileSafe, MONTHS } from "./util.js";
@@ -216,19 +216,35 @@ export async function openMappingEditor(category, wbGiven) {
 
 /* ---------- Generate Excel ---------- */
 
+// The company form shipped with MITAK (used until another one is uploaded).
+async function builtinTemplate(category) {
+  const b = BUILTIN_TEMPLATES[category];
+  const res = await fetch(b.url, { cache: "no-cache" });
+  if (!res.ok) throw Object.assign(new Error("builtin"), { code: "offline" });
+  return res.arrayBuffer();
+}
+export async function downloadBuiltin(category) {
+  try { downloadFile(toFile(await builtinTemplate(category), BUILTIN_TEMPLATES[category].fileName)); }
+  catch (e) { toast("Couldn’t download the form. Check your connection.", "bad"); }
+}
+
 export async function runReport(category, opts = {}) {
-  const month = S.repMonth, who = S.repWho, c = CAT[category];
-  const t = S.templates[category];
-  const mapping = opts.mapping || (t && t.mapping) || {};
+  const month = S.repMonth, who = S.repWho == null ? S.user.id : S.repWho, c = CAT[category];
+  const t = S.templates[category] && S.templates[category].filePath ? S.templates[category] : null;
+  const builtin = !t && BUILTIN_TEMPLATES[category];
+  const mapping = opts.mapping || (t && t.mapping) || (builtin && builtin.mapping) || {};
   const data = buildReportData({ expenses: S.expenses, members: S.members, workspaceName: S.workspace ? S.workspace.name : "MITAK", category, month, paidBy: who, sort: mapping.sort });
   if (!data.rows.length && !opts.test) { toast(`No ${c.label.toLowerCase()} expenses in ${monthLabel(month)}.`, "bad"); return; }
   const b = busy("Making the Excel file…");
   try {
     const ExcelJS = await getExcelJS();
     let buf, usedTemplate = false;
-    if (t && t.filePath) {
+    if (t) {
       const blob = await S.backend.fileBlob(t.filePath);
       buf = await fillTemplate(ExcelJS, await blob.arrayBuffer(), mapping, data);
+      usedTemplate = true;
+    } else if (builtin) {
+      buf = await fillTemplate(ExcelJS, await builtinTemplate(category), mapping, data);
       usedTemplate = true;
     } else buf = await buildPlainWorkbook(ExcelJS, data, DEFAULT_COLUMNS[category], c.label);
     const [y, m] = month.split("-").map(Number);

@@ -12,6 +12,7 @@ and MITAK fills in the company's reimbursement Excel forms at the end of the mon
 | Screen | |
 | --- | --- |
 | **Home** | Today and this month: my spending, my colleague's, the total; the four types this month; recent expenses; a big **Add Expense** button. |
+| **Who owes who** | Mark an expense as shared (half each, or a custom split such as 20 / 40) and the other person owes you their part. Home shows the balance (“Ashkar owes you AED 40”); record payments to settle up. |
 | **Add Expense** | Type, amount, date (today), time, paid by (me), note, receipt photo or PDF. Fuel asks optionally for vehicle, odometer, litres, station and price per litre. An optional trip name (e.g. *Abu Dhabi → Dubai*) groups expenses of a journey, whoever paid. |
 | **Calendar** | Each day's total, days with spending highlighted; tap a day for both people's totals and its expenses. |
 | **Expenses** | Everything, filtered by month, date, person and type, newest or oldest first. Tap to edit or delete (with confirmation). |
@@ -19,6 +20,10 @@ and MITAK fills in the company's reimbursement Excel forms at the end of the mon
 | **Reports** | Per month and type: total and **Generate Excel**, for both of you or one person, filled into the uploaded company template. |
 | **Settings** | Your name and details for the forms, notifications, the invite code, reimbursement templates and their field mapping, account. |
 | **Notifications** | When one of you adds an expense, the other's phone gets a notification (“Shafi added an expense: ⛽ Fuel · AED 150.00”). |
+
+Each person adds, changes and deletes only their own expenses; the colleague's expenses are visible
+but read-only. Fuel reports fill in the company's fuel claim form (built in), with Site / Type
+(Deployment = half claimed, AEP Client Site = full), KMs travelled and Bill attached.
 
 Privacy: one closed workspace for exactly two people. The first person creates it and gets a one-time
 invite code; once the colleague joins, the code is gone and new sign-ups are refused. Every row and file is
@@ -41,6 +46,8 @@ js/reports.js        totals and the values written into Excel
 js/fields.js         categories, form fields and template fields: edit here to add fields
 js/data.js           Supabase backend and the on-device demo backend
 js/push.js           turning notifications on/off, notifying the colleague
+js/balance.js        who owes who: shared expenses and payments
+templates/fuel-claim-form.xlsx   the company fuel claim form used for fuel reports
 supabase/schema.sql  tables, privacy rules, invite functions, storage bucket, notification phones
 supabase/functions/notify/index.ts   Edge Function that sends the notifications (Web Push)
 docs/TEMPLATES.md    how templates and mappings work

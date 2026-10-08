@@ -2,11 +2,12 @@
 // notifications (sent by the Supabase Edge Function "notify") when the colleague adds an expense.
 // App files: newest from the network, saved copy when offline. Libraries from the CDN are
 // versioned, so the saved copy is used. Supabase (accounts, data, receipts) is never cached here.
-const VERSION = "mitak-v3";
+const VERSION = "mitak-v4";
 const SHELL = [
   "./", "./index.html", "./app.css", "./config.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png",
-  "./js/app.js", "./js/data.js", "./js/excel.js", "./js/expense-form.js", "./js/fields.js", "./js/push.js", "./js/reports.js",
-  "./js/state.js", "./js/templates-ui.js", "./js/ui.js", "./js/util.js", "./js/views.js"
+  "./js/app.js", "./js/balance.js", "./js/data.js", "./js/excel.js", "./js/expense-form.js", "./js/fields.js", "./js/push.js", "./js/reports.js",
+  "./js/state.js", "./js/templates-ui.js", "./js/ui.js", "./js/util.js", "./js/views.js",
+  "./templates/fuel-claim-form.xlsx"
 ];
 const LIBS = [
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4/dist/umd/supabase.js",

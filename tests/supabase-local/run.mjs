@@ -188,8 +188,10 @@ test("two colleagues on a real Supabase stack", async () => {
   await addExpense(b, "parking", 20);
   const row = b.locator(".xrow", { hasText: "Fuel" }).first();
   await row.click();
-  await b.waitForSelector(".thumb-file");
-  assert.match(await b.textContent("[data-testid=expense-sheet]"), /Added by Shafi/);
+  await b.waitForSelector("[data-testid=expense-view]");
+  const view = await b.textContent("[data-testid=expense-view]");
+  assert.match(view, /Receipt 1/);
+  assert.match(view, /Only Shafi can change or delete this expense/);
   await b.click(".sheet [data-close]");
 
   // Notifications: Ahmed turns them on from the Home banner; Shafi adds an expense; Ahmed's phone gets it.
@@ -205,13 +207,13 @@ test("two colleagues on a real Supabase stack", async () => {
   assert.deepEqual(push.message, { title: "Shafi added an expense", body: "🛣️ Toll · AED 8.00 · Salik", tag: push.message.tag });
   assert.match(push.headers.authorization, /^vapid t=.+, k=.+/);
   assert.equal(push.headers["content-encoding"], "aes128gcm");
-  // Recorded for Ahmed by Shafi: Ahmed is told it was paid by him.
+  // Lunch for 30, of which 20 is Ahmed's: Ahmed is told his share.
   await a.reload();
   await a.waitForFunction(() => /Ahmed’s spending/.test((document.querySelector(".split.strong") || {}).textContent || ""));
   seen = inbox.length;
-  await addExpense(a, "food", "30", async () => { await a.click("[data-pick=paidBy]:not([aria-pressed=true])"); });
+  await addExpense(a, "food", "30", async () => { await a.click("[data-split=custom]"); await a.fill("#e-theirs", "20"); });
   push = await nextPush(ahmedPhone, seen);
-  assert.equal(push.message.body, "🍴 Food · AED 30.00 · paid by you");
+  assert.equal(push.message.body, "🍴 Food · AED 30.00 · your share AED 20.00");
   // Ahmed's own expenses don't notify Ahmed; the test button does.
   seen = inbox.length;
   await b.click("[data-act=push-test]");
@@ -223,14 +225,28 @@ test("two colleagues on a real Supabase stack", async () => {
   assert.equal(anon.status, 401, "the function needs a signed-in member");
   await b.click(".tab[data-to=home]");
 
-  // Shafi sees Ahmed's expense after a refresh, and can edit it.
+  // Shafi sees Ahmed's expense but can't change it; Ahmed can.
   await a.reload();
-  await a.waitForSelector(".hello");
-  await a.waitForFunction(() => /Ahmed’s spending\s*AED 50\.00/.test(document.querySelector(".split.strong").textContent));
+  await a.waitForFunction(() => /Ahmed’s spending\s*AED 20\.00/.test((document.querySelector(".split.strong") || {}).textContent || ""));
   await a.locator(".xrow", { hasText: "Parking" }).first().click();
-  await a.fill("#e-amount", "25");
-  await a.click("[data-x=save]");
-  await a.waitForSelector(".toast >> text=Expense updated.");
+  await a.waitForSelector("[data-testid=expense-view] >> text=Only Ahmed can change or delete this expense.");
+  await a.click(".sheet [data-close]");
+  await b.reload();
+  await b.waitForFunction(() => /Shafi’s spending\s*AED 188\.25/.test((document.querySelector(".split.strong") || {}).textContent || ""));
+  await b.locator(".xrow", { hasText: "Parking" }).first().click();
+  await b.fill("#e-amount", "25");
+  await b.click("[data-x=save]");
+  await b.waitForSelector(".toast >> text=Expense updated.");
+
+  // Who owes who: Ahmed owes Shafi 20 for lunch, pays it back, and they're settled.
+  assert.match(await b.textContent("[data-testid=balance-card]"), /AED 20\.00\s*You owe Shafi/);
+  await b.click("[data-act=record-payment]");
+  assert.equal(await b.getAttribute("[data-dir=me-to-them]", "aria-pressed"), "true");
+  assert.equal(await b.inputValue("#p-amount"), "20");
+  await b.click("[data-testid=payment-sheet] [data-x=save]");
+  await b.waitForSelector(".toast >> text=Payment recorded.");
+  await a.reload();
+  await a.waitForFunction(() => /All settled up/.test((document.querySelector("[data-testid=balance-card]") || {}).textContent || ""));
 
   // The stranger still sees nothing; new sign-ups are now refused.
   await x.reload();
@@ -243,20 +259,24 @@ test("two colleagues on a real Supabase stack", async () => {
   await signUp(y, "late@example.com");
   assert.match(await errText(y, "#auth-form .err"), /already has its two members/);
 
-  // Reports from the real data; delete with confirmation.
+  // Reports from the real data (the built-in fuel form); Ahmed deletes his own expense.
   await a.click(".tab[data-to=reports]");
+  assert.equal(await a.textContent("[data-testid=report-parking] .report-total .money"), "AED 0.00", "only mine by default");
+  await a.click("[data-act=rep-who]:has-text('Both of us')");
   assert.equal(await a.textContent("[data-testid=report-parking] .report-total .money"), "AED 25.00");
+  await a.click("[data-act=rep-who]:has-text('Only mine')");
   await a.click("[data-testid=report-fuel] [data-act=generate]");
   await a.waitForSelector("[data-save]");
   await a.click(".sheet [data-close]");
-  await a.click(".tab[data-to=expenses]");
-  await a.locator(".xrow", { hasText: "Parking" }).first().click();
-  await a.click("[data-x=delete]");
-  await a.click(".dialog [data-v='1']");
-  await a.waitForSelector(".toast >> text=Expense deleted.");
+  await b.click(".tab[data-to=expenses]");
+  await b.locator(".xrow", { hasText: "Parking" }).first().click();
+  await b.click("[data-x=delete]");
+  await b.click(".dialog [data-v='1']");
+  await b.waitForSelector(".toast >> text=Expense deleted.");
   // After a reload MITAK shows the saved copy first, then the fresh data.
+  await b.click(".tab[data-to=home]");
   await b.reload();
-  await b.waitForFunction(() => /My spending\s*AED 30\.00/.test((document.querySelector(".split.strong") || {}).textContent || ""));
+  await b.waitForFunction(() => /My spending\s*AED 0\.00/.test((document.querySelector(".split.strong") || {}).textContent || ""));
 
   // Profile and sign out / sign in again.
   await b.click("#gear");

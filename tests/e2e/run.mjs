@@ -139,15 +139,32 @@ test("demo: Excel reports, with and without the company template", async () => {
   const ctx = await phone(); const page = await newPage(ctx);
   await page.goto(url + "?demo&latency=0#reports");
   await page.waitForSelector("[data-testid=report-fuel]");
+  assert.equal(await page.getAttribute("[data-act=rep-who][aria-pressed=true]", "data-v") !== "", true, "reports start with only my expenses");
+  await page.click("[data-act=rep-who]:has-text('Both of us')");
   const fuelTotal = money(await page.textContent("[data-testid=report-fuel] .report-total .money"));
+  await page.click("[data-act=rep-who]:has-text('Only mine')");
+  assert.match(await page.textContent("[data-testid=report-fuel]"), /Form: Fuel Expense Claim Form/);
 
-  // No template: simple layout
+  // Fuel: the company's fuel claim form, built in
   await page.click("[data-testid=report-fuel] [data-act=generate]");
   await page.waitForSelector("[data-save]");
   let [dl] = await Promise.all([page.waitForEvent("download"), page.click("[data-save]")]);
-  assert.match(dl.suggestedFilename(), /^MITAK_Fuel_[A-Z][a-z]+_\d{4}\.xlsx$/);
-  let ws = (await readXlsx(dl)).worksheets[0];
-  assert.match(String(ws.getCell("A1").value), /Fuel reimbursement/);
+  assert.match(dl.suggestedFilename(), /^MITAK_Fuel_[A-Z][a-z]+_\d{4}_Sami\.xlsx$/);
+  let ws = (await readXlsx(dl)).getWorksheet("Fuel Expense Claim");
+  assert.equal(ws.getCell("B2").value, "FUEL EXPENSE CLAIM FORM");
+  assert.equal(ws.getCell("C6").value, "Sami");
+  assert.equal(ws.getCell("B13").value, 1);
+  assert.ok(["Deployment", "AEP Client Site"].includes(ws.getCell("D13").value));
+  assert.match(String(ws.getCell("G13").value), /^\d+ KM$/);
+  assert.equal(ws.getCell("H13").value, "Y");
+  await page.click(".sheet [data-close]");
+
+  // Toll has no form: MITAK's simple layout
+  await page.click("[data-testid=report-toll] [data-act=generate]");
+  await page.waitForSelector("[data-save]");
+  [dl] = await Promise.all([page.waitForEvent("download"), page.click("[data-save]")]);
+  ws = (await readXlsx(dl)).worksheets[0];
+  assert.match(String(ws.getCell("A1").value), /Toll reimbursement/);
   await page.click(".sheet [data-close]");
 
   // Upload the company template from Settings
@@ -169,7 +186,6 @@ test("demo: Excel reports, with and without the company template", async () => {
 
   // Generate for "only mine": the template is filled in place
   await page.click(".tab[data-to=reports]");
-  await page.click("[data-act=rep-who]:has-text('Only mine')");
   const mine = money(await page.textContent("[data-testid=report-fuel] .report-total .money"));
   assert.ok(mine > 0 && mine < fuelTotal);
   await page.click("[data-testid=report-fuel] [data-act=generate]");
@@ -184,6 +200,60 @@ test("demo: Excel reports, with and without the company template", async () => {
   let sum = 0;
   for (let r = 7; r < 40 && typeof ws.getCell(`H${r}`).value === "number"; r++) sum += ws.getCell(`H${r}`).value;
   assert.equal(+sum.toFixed(2), mine, "every one of my fuel expenses is in the file");
+  await ctx.close();
+});
+
+test("demo: only your own expenses can be changed; splits and payments add up", async () => {
+  const ctx = await phone(); const page = await newPage(ctx);
+  await page.goto(url + "?demo&latency=0");
+  await page.waitForSelector("[data-testid=balance-card]");
+  const net = async () => { const el = page.locator("[data-testid=balance-card] .owe-amt"); const v = money(await el.textContent()); return (await el.getAttribute("class")).includes("neg") ? -v : v; };
+  const before = await net();
+
+  // Omar's expense opens read-only for Sami.
+  await page.click(".tab[data-to=expenses]");
+  await page.click("[data-act=xf-user]:has-text('Omar')");
+  await page.locator(".xrow").first().click();
+  await page.waitForSelector("[data-testid=expense-view]");
+  assert.match(await page.textContent("[data-testid=expense-view]"), /Only Omar can change or delete this expense/);
+  assert.equal(await page.locator("[data-testid=expense-view] [data-x=save], [data-testid=expense-view] [data-x=delete]").count(), 0);
+  await page.click(".sheet [data-close]");
+
+  // Food for 60, of which 40 is Omar's.
+  await page.click("#fab");
+  assert.equal(await page.locator("[data-pick=paidBy]").count(), 0, "no choosing someone else as the payer");
+  await page.click("[data-pick=category][data-v=food]");
+  await page.fill("#e-amount", "60");
+  await page.click("[data-split=custom]");
+  await page.fill("#e-theirs", "40");
+  assert.equal(await page.inputValue("#e-mine"), "20");
+  assert.match(await page.textContent("#e-split-hint"), /Omar owes you AED 40\.00/);
+  await page.click("[data-x=save]");
+  await page.waitForSelector(".toast >> text=Expense added successfully.");
+  await page.click(".tab[data-to=home]");
+  assert.equal(await net(), +(before + 40).toFixed(2));
+
+  // Fuel for a deployment is shared half each; the last Site / Type is remembered.
+  await page.click(".add-main");
+  await page.click("[data-pick=category][data-v=fuel]");
+  assert.equal(await page.getAttribute("[data-detail=site_type][data-v='AEP Client Site']", "aria-pressed"), "true", "remembers Sami's last fuel (a client site)");
+  await page.click("[data-detail=site_type][data-v=Deployment]");
+  assert.equal(await page.getAttribute("[data-split=equal]", "aria-pressed"), "true");
+  await page.click("[data-detail=site_type][data-v='AEP Client Site']");
+  assert.equal(await page.getAttribute("[data-split=none]", "aria-pressed"), "true", "client-site fuel isn't shared");
+  await page.click(".sheet [data-close]");
+
+  // Omar pays 40 back.
+  await page.click("[data-act=record-payment]");
+  await page.click("[data-dir=them-to-me]");
+  await page.fill("#p-amount", "40");
+  await page.fill("#p-note", "Cash");
+  await page.click("[data-testid=payment-sheet] [data-x=save]");
+  await page.waitForSelector(".toast >> text=Payment recorded.");
+  assert.equal(await net(), before);
+  await page.click("[data-act=open-balance]");
+  assert.match(await page.textContent("[data-testid=balance-sheet]"), /Omar paid you · Cash/);
+  assert.ok(await page.locator("[data-testid=balance-sheet] [data-open]").count() > 0, "shared expenses are listed");
   await ctx.close();
 });
 

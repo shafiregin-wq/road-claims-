@@ -4,6 +4,15 @@ MITAK fills in the company's own Excel forms instead of making its own report. U
 per expense type in **Settings › Reimbursement templates**; MITAK stores it in the shared workspace, so
 both of you use the same form.
 
+## The built-in fuel claim form
+
+`templates/fuel-claim-form.xlsx` is the company's fuel expense claim form with the sample rows and
+personal details removed. Its mapping is `BUILTIN_TEMPLATES.fuel` in [`js/fields.js`](../js/fields.js):
+name, designation and employee ID at the top, rows from 13 (S.No, Date, Site / Type, Full Fuel Amount,
+KMs Travelled, Bill Attached, Remarks), the signature name and date at the bottom. The Reimbursable
+Amount column and the totals stay formulas. With more than 8 fuel expenses, rows are added above the
+total. Uploading another fuel form in Settings replaces it.
+
 ## What MITAK changes in a template
 
 Only the cells in the mapping. Everything else (logo, headings, borders, column widths, merged cells,

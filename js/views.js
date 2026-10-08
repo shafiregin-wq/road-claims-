@@ -1,8 +1,8 @@
 // The main screens: Dashboard, Calendar, Expenses, Monthly Summary, Reports, Settings.
 
 import { S, me, colleague, whoLabel, rerender } from "./state.js";
-import { CATEGORIES, CAT, PROFILE_FIELDS } from "./fields.js";
-import { totals, inMonth, onDay, byDay, byTrip, newestFirst, oldestFirst, reportExpenses } from "./reports.js";
+import { CATEGORIES, CAT, PROFILE_FIELDS, BUILTIN_TEMPLATES } from "./fields.js";
+import { totals, inMonth, onDay, byDay, byTrip, newestFirst, oldestFirst, reportExpenses, balance } from "./reports.js";
 import { esc, aed, compact, todayISO, monthOf, monthLabel, monthShort, shiftMonth, daysInMonth, parseISO, pad, fmtDayMonth, fmtLongDay, fmtTime, formatInvite, MONTHS } from "./util.js";
 import { ic } from "./ui.js";
 import { bannerDismissed } from "./push.js";
@@ -14,7 +14,9 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 export function expenseRow(e, opts = {}) {
   const c = CAT[e.category] || { emoji: "•", label: e.category, color: "#999" };
-  const sub = [whoLabel(e.paidBy), opts.noDate ? "" : fmtDayMonth(e.date), fmtTime(e.time), e.trip ? "🧭 " + e.trip : ""].filter(Boolean).join(" · ");
+  const other = colleague();
+  const share = +e.otherShare > 0 ? (e.paidBy === S.user.id ? `${other ? other.displayName : "Colleague"} owes ${aed(e.otherShare)}` : `you owe ${aed(e.otherShare)}`) : "";
+  const sub = [whoLabel(e.paidBy), opts.noDate ? "" : fmtDayMonth(e.date), fmtTime(e.time), share, e.trip ? "🧭 " + e.trip : ""].filter(Boolean).join(" · ");
   return `<button class="xrow" data-act="edit-expense" data-id="${esc(e.id)}">
     <span class="xemoji" style="--c:${c.color}" aria-hidden="true">${c.emoji}</span>
     <span class="xmain"><span class="xtitle">${esc(c.label)}${e.description ? ` <span class="muted">· ${esc(e.description)}</span>` : ""}</span><span class="xsub">${esc(sub)}</span></span>
@@ -51,6 +53,19 @@ function inviteBanner() {
     <div class="code-big" data-testid="invite-code">${esc(formatInvite(ws.inviteCode))}</div>
     <div class="row-btns"><button class="btn primary" data-act="share-invite">${ic("share", 18)} Share invite</button><button class="btn" data-act="copy-invite">${ic("copy", 18)} Copy code</button></div>
   </div>`;
+}
+
+export function balanceCard() {
+  const other = colleague(); if (!other) return "";
+  const b = balance(S.expenses, S.settlements, S.user.id, other.userId), name = esc(other.displayName);
+  const line = b.net > 0 ? `<span class="owe-amt pos money">${aed(b.net)}</span><span>${name} owes you</span>`
+    : b.net < 0 ? `<span class="owe-amt neg money">${aed(-b.net)}</span><span>You owe ${name}</span>`
+    : `<span class="owe-amt money">AED 0.00</span><span>All settled up</span>`;
+  return `<section class="card owe-card" data-testid="balance-card">
+    <div class="card-head"><h2>Who owes who</h2><button class="link" data-act="open-balance">Details</button></div>
+    <div class="owe-line">${line}</div>
+    <div class="row-btns"><button class="btn small" data-act="record-payment">Record a payment</button></div>
+  </section>`;
 }
 
 function pushBanner() {
@@ -97,6 +112,7 @@ export function viewHome() {
     <div class="card-head"><h2>Today</h2><span class="muted small">${plural(tT.count, "expense")}</span></div>
     ${peopleRows(tT.byUser, tT.total)}
   </section>
+  ${balanceCard()}
   <section class="card">
     <div class="card-head"><h2>${monthLabel(month)}</h2><button class="link" data-act="go" data-to="summary">Summary</button></div>
     ${peopleRows(mT.byUser, mT.total, { totalLabel: "Combined total", strong: true })}
@@ -245,6 +261,7 @@ export function viewSummary() {
 
 export function viewReports() {
   const month = S.repMonth, my = me(), other = colleague();
+  if (S.repWho == null) S.repWho = S.user.id;
   const who = S.repWho;
   const chip = (v, label) => `<button class="chip" data-act="rep-who" data-v="${esc(v)}" aria-pressed="${v === who}">${label}</button>`;
   const cats = CATEGORIES.filter(c => c.report || S.templates[c.id]);
@@ -253,7 +270,7 @@ export function viewReports() {
   ${monthNav(month, "rep-month")}
   <section class="card tight">
     <span class="lbl">Whose expenses</span>
-    <div class="seg" role="group" aria-label="Whose expenses">${chip("", "Both of us")}${my ? chip(my.userId, "Only mine") : ""}${other ? chip(other.userId, "Only " + esc(other.displayName) + "’s") : ""}</div>
+    <div class="seg" role="group" aria-label="Whose expenses">${my ? chip(my.userId, "Only mine") : ""}${other ? chip(other.userId, "Only " + esc(other.displayName) + "’s") : ""}${chip("", "Both of us")}</div>
   </section>
   ${cats.map(c => {
     const items = reportExpenses(S.expenses, { category: c.id, month, paidBy: who });
@@ -262,7 +279,7 @@ export function viewReports() {
     return `<section class="card report-card" data-testid="report-${c.id}">
       <div class="card-head"><h2>${c.emoji} ${c.label}</h2><span class="muted small">${plural(items.length, "expense")}</span></div>
       <p class="report-total">Total: <span class="money">${aed(total)}</span></p>
-      <p class="small ${tpl && tpl.filePath ? "" : "muted"}">${tpl && tpl.filePath ? `${ic("sheet", 15)} Template: ${esc(tpl.fileName)}` : `No ${c.label.toLowerCase()} template yet: MITAK makes a simple Excel layout. <button class="link" data-act="go" data-to="settings" data-anchor="templates">Upload template</button>`}</p>
+      <p class="small ${tpl && tpl.filePath || BUILTIN_TEMPLATES[c.id] ? "" : "muted"}">${tpl && tpl.filePath ? `${ic("sheet", 15)} Form: ${esc(tpl.fileName)}` : BUILTIN_TEMPLATES[c.id] ? `${ic("sheet", 15)} Form: ${esc(BUILTIN_TEMPLATES[c.id].fileName.replace(/\.xlsx$/, ""))}` : `No ${c.label.toLowerCase()} template yet: MITAK makes a simple Excel layout. <button class="link" data-act="go" data-to="settings" data-anchor="templates">Upload template</button>`}</p>
       <button class="btn primary" data-act="generate" data-cat="${c.id}" ${items.length ? "" : "disabled"}>${ic("sheet", 18)} Generate Excel</button>
     </section>`;
   }).join("")}
@@ -304,8 +321,10 @@ export function viewSettings() {
       const cols = t && t.mapping && t.mapping.columns ? Object.keys(t.mapping.columns).length : 0;
       return `<div class="tpl-row" data-testid="tpl-${c.id}">
         <span class="xemoji" style="--c:${c.color}">${c.emoji}</span>
-        <div class="tpl-main"><b>${c.label}</b><span class="muted small">${t && t.filePath ? `${esc(t.fileName)} · ${plural(cols, "column")} mapped` : "No template"}</span></div>
-        <div class="tpl-btns">${t && t.filePath ? `<button class="btn small" data-act="tpl-edit" data-cat="${c.id}">Mapping</button><button class="icon-btn" data-act="tpl-menu" data-cat="${c.id}" aria-label="More for ${c.label} template">${ic("chevD", 16)}</button>` : `<button class="btn small" data-act="tpl-upload" data-cat="${c.id}">${ic("upload", 16)} Upload</button>`}</div>
+        <div class="tpl-main"><b>${c.label}</b><span class="muted small">${t && t.filePath ? `${esc(t.fileName)} · ${plural(cols, "column")} mapped` : BUILTIN_TEMPLATES[c.id] ? "Company claim form (built in)" : "No template"}</span></div>
+        <div class="tpl-btns">${t && t.filePath ? `<button class="btn small" data-act="tpl-edit" data-cat="${c.id}">Mapping</button><button class="icon-btn" data-act="tpl-menu" data-cat="${c.id}" aria-label="More for ${c.label} template">${ic("chevD", 16)}</button>`
+          : BUILTIN_TEMPLATES[c.id] ? `<button class="btn small" data-act="tpl-builtin" data-cat="${c.id}">${ic("download", 16)} Form</button><button class="btn small" data-act="tpl-upload" data-cat="${c.id}">${ic("upload", 16)} Replace</button>`
+          : `<button class="btn small" data-act="tpl-upload" data-cat="${c.id}">${ic("upload", 16)} Upload</button>`}</div>
       </div>`;
     }).join("")}</div>
   </section>

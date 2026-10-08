@@ -46,7 +46,7 @@ create table if not exists public.expenses (
   amount       numeric(12, 2) not null check (amount > 0 and amount < 1000000),
   expense_date date not null,
   expense_time time,
-  paid_by      uuid not null,           -- the member who paid (defaults to whoever adds it)
+  paid_by      uuid not null,           -- the member who paid; only they can change or delete it
   created_by   uuid,                    -- set automatically from the signed-in user
   updated_by   uuid,                    -- set automatically from the signed-in user
   description  text not null default '' check (char_length(description) <= 500),
@@ -60,6 +60,34 @@ create table if not exists public.expenses (
   updated_at   timestamptz not null default now()
 );
 create index if not exists expenses_workspace_date on public.expenses (workspace_id, expense_date desc);
+
+-- Sharing an expense: other_share is the colleague's part of it, which they owe the person who paid.
+-- split: 'none' (all mine), 'equal' (half each) or 'custom'.
+alter table public.expenses add column if not exists split text not null default 'none';
+alter table public.expenses add column if not exists other_share numeric(12, 2) not null default 0;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'expenses_split_check') then
+    alter table public.expenses add constraint expenses_split_check check (
+      split in ('none', 'equal', 'custom') and other_share >= 0 and other_share <= amount
+      and (split <> 'none' or other_share = 0));
+  end if;
+end
+$$;
+
+-- Money one member pays the other to settle up.
+create table if not exists public.settlements (
+  id           uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  from_user    uuid not null,            -- who paid the money
+  to_user      uuid not null,            -- who received it
+  amount       numeric(12, 2) not null check (amount > 0 and amount < 1000000),
+  settle_date  date not null default current_date,
+  note         text not null default '' check (char_length(note) <= 200),
+  created_by   uuid,
+  created_at   timestamptz not null default now(),
+  check (from_user <> to_user)
+);
 
 -- One reimbursement Excel template per category, with its field-to-cell mapping.
 create table if not exists public.report_templates (
@@ -253,6 +281,25 @@ drop trigger if exists expenses_guard on public.expenses;
 create trigger expenses_guard before insert or update on public.expenses
   for each row execute function public.expenses_guard();
 
+create or replace function public.settlements_guard()
+returns trigger
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  if new.from_user = new.to_user then raise exception 'MITAK_SAME_PERSON'; end if;
+  if (select count(*) from public.members where workspace_id = new.workspace_id and user_id in (new.from_user, new.to_user)) <> 2 then
+    raise exception 'MITAK_PAID_BY_NOT_MEMBER';
+  end if;
+  new.created_by := coalesce(auth.uid(), new.created_by);
+  new.created_at := now();
+  return new;
+end
+$$;
+drop trigger if exists settlements_guard on public.settlements;
+create trigger settlements_guard before insert on public.settlements
+  for each row execute function public.settlements_guard();
+
 create or replace function public.templates_touch()
 returns trigger
 language plpgsql
@@ -276,8 +323,11 @@ alter table public.workspaces       enable row level security;
 alter table public.members          enable row level security;
 alter table public.expenses         enable row level security;
 alter table public.report_templates enable row level security;
+alter table public.settlements      enable row level security;
 
-revoke all on public.workspaces, public.members, public.expenses, public.report_templates from anon;
+revoke all on public.workspaces, public.members, public.expenses, public.report_templates, public.settlements from anon;
+revoke all on public.settlements from authenticated;
+grant select, insert, delete on public.settlements to authenticated;
 revoke all on public.workspaces, public.members from authenticated;
 grant select on public.workspaces, public.members to authenticated;
 grant update (name) on public.workspaces to authenticated;
@@ -298,11 +348,33 @@ drop policy if exists "members: edit own profile" on public.members;
 create policy "members: edit own profile" on public.members
   for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
+-- Both members see every expense; each adds, changes and deletes only their own.
 drop policy if exists "expenses: members only" on public.expenses;
-create policy "expenses: members only" on public.expenses
-  for all to authenticated
-  using (workspace_id = public.my_workspace_id())
-  with check (workspace_id = public.my_workspace_id());
+drop policy if exists "expenses: members read" on public.expenses;
+create policy "expenses: members read" on public.expenses
+  for select to authenticated using (workspace_id = public.my_workspace_id());
+drop policy if exists "expenses: add own" on public.expenses;
+create policy "expenses: add own" on public.expenses
+  for insert to authenticated with check (workspace_id = public.my_workspace_id() and paid_by = auth.uid());
+drop policy if exists "expenses: change own" on public.expenses;
+create policy "expenses: change own" on public.expenses
+  for update to authenticated
+  using (workspace_id = public.my_workspace_id() and paid_by = auth.uid())
+  with check (workspace_id = public.my_workspace_id() and paid_by = auth.uid());
+drop policy if exists "expenses: delete own" on public.expenses;
+create policy "expenses: delete own" on public.expenses
+  for delete to authenticated using (workspace_id = public.my_workspace_id() and paid_by = auth.uid());
+
+-- Payments between the two: either can record one they're part of; only its author can delete it.
+drop policy if exists "settlements: members read" on public.settlements;
+create policy "settlements: members read" on public.settlements
+  for select to authenticated using (workspace_id = public.my_workspace_id());
+drop policy if exists "settlements: add own" on public.settlements;
+create policy "settlements: add own" on public.settlements
+  for insert to authenticated with check (workspace_id = public.my_workspace_id() and auth.uid() in (from_user, to_user));
+drop policy if exists "settlements: delete own" on public.settlements;
+create policy "settlements: delete own" on public.settlements
+  for delete to authenticated using (workspace_id = public.my_workspace_id() and created_by = auth.uid());
 
 drop policy if exists "templates: members only" on public.report_templates;
 create policy "templates: members only" on public.report_templates
@@ -332,19 +404,33 @@ drop policy if exists "mitak files: members read" on storage.objects;
 create policy "mitak files: members read" on storage.objects
   for select to authenticated
   using (bucket_id = 'mitak' and (storage.foldername(name))[1] = public.my_workspace_id()::text);
+-- Receipts under receipts/<expense id>/ can only be added or removed by whoever paid that expense.
+create or replace function public.mitak_can_change_file(p_name text)
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select (storage.foldername(p_name))[1] = public.my_workspace_id()::text
+     and (coalesce((storage.foldername(p_name))[2], '') <> 'receipts'
+          or not exists (select 1 from public.expenses e
+                         where e.id::text = (storage.foldername(p_name))[3] and e.paid_by <> auth.uid()))
+$$;
+revoke execute on function public.mitak_can_change_file(text) from public, anon;
+grant execute on function public.mitak_can_change_file(text) to authenticated;
+
 drop policy if exists "mitak files: members add" on storage.objects;
 create policy "mitak files: members add" on storage.objects
   for insert to authenticated
-  with check (bucket_id = 'mitak' and (storage.foldername(name))[1] = public.my_workspace_id()::text);
+  with check (bucket_id = 'mitak' and public.mitak_can_change_file(name));
 drop policy if exists "mitak files: members replace" on storage.objects;
 create policy "mitak files: members replace" on storage.objects
   for update to authenticated
-  using (bucket_id = 'mitak' and (storage.foldername(name))[1] = public.my_workspace_id()::text)
-  with check (bucket_id = 'mitak' and (storage.foldername(name))[1] = public.my_workspace_id()::text);
+  using (bucket_id = 'mitak' and public.mitak_can_change_file(name))
+  with check (bucket_id = 'mitak' and public.mitak_can_change_file(name));
 drop policy if exists "mitak files: members delete" on storage.objects;
 create policy "mitak files: members delete" on storage.objects
   for delete to authenticated
-  using (bucket_id = 'mitak' and (storage.foldername(name))[1] = public.my_workspace_id()::text);
+  using (bucket_id = 'mitak' and public.mitak_can_change_file(name));
 
 -- ---------------------------------------------------------------------
 -- Push notifications: each phone that turned notifications on, and the
@@ -421,7 +507,7 @@ do $$
 declare t text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['expenses', 'members', 'report_templates', 'workspaces'] loop
+    foreach t in array array['expenses', 'members', 'report_templates', 'workspaces', 'settlements'] loop
       if not exists (
         select 1 from pg_publication_tables
         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
