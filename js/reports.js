@@ -3,7 +3,7 @@
 //   { id, category, amount, date: "YYYY-MM-DD", time: "HH:MM", paidBy, createdBy, description,
 //     location, trip, details: {…}, receipts: [...], createdAt, updatedAt }
 
-import { CAT, CATEGORIES } from "./fields.js";
+import { CAT, CATEGORIES, SHARED_FUEL_SITE } from "./fields.js";
 import { r2, monthOf, monthLabel, monthStart, monthEnd, dayName, todayISO } from "./util.js";
 
 export function totals(list) {
@@ -70,9 +70,16 @@ export function previousOdometers(all) {
   return prev;
 }
 
+const sharedFuel = e => e.category === "fuel" && (e.details || {}).site_type === SHARED_FUEL_SITE;
+
+// The expenses on one person's form: their own, plus the colleague's shared (Deployment) fuel bills,
+// because both of them claim half of a shared bill.
 export function reportExpenses(all, { category, month, paidBy }) {
-  return all.filter(e => e.category === category && monthOf(e.date) === month && (!paidBy || e.paidBy === paidBy));
+  return all.filter(e => e.category === category && monthOf(e.date) === month && (!paidBy || e.paidBy === paidBy || sharedFuel(e)));
 }
+
+// What the company pays back for an expense on the form: half of a shared fuel bill, otherwise all of it.
+export const claimable = e => r2(sharedFuel(e) ? (+e.amount || 0) / 2 : +e.amount || 0);
 
 // Everything a template can ask for, for one category and month.
 export function buildReportData({ expenses, members, workspaceName = "MITAK", category, month, paidBy = "", sort = "oldest", today = todayISO() }) {
@@ -95,7 +102,7 @@ export function buildReportData({ expenses, members, workspaceName = "MITAK", ca
       amount,
       amount_excl_vat: r2(amount - vat),
       vat_amount: vat,
-      description: e.description || "",
+      description: paidBy && e.paidBy !== paidBy ? [e.description, `Shared bill – paid by ${nameOf(members, e.paidBy)}`].filter(Boolean).join(" · ") : e.description || "",
       location: e.location || "",
       trip: e.trip || "",
       paid_by: nameOf(members, e.paidBy),

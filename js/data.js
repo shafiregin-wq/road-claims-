@@ -409,7 +409,7 @@ export function seedDemo(today = todayISO()) {
     if (who === "together") {
       const trip = d % 2 ? "Abu Dhabi → Dubai" : "Abu Dhabi → Ruwais";
       odo1 += 380;
-      add(date, u1, "fuel", 150 + (d % 4) * 12.5, { trip, time: "07:10", description: "ADNOC", split: "equal", details: { site_type: "Deployment", kms: 380, bill_attached: "Y", vehicle: "Plate A 12345", odometer: odo1, litres: 52.6, fuel_station: "ADNOC" } });
+      add(date, u1, "fuel", 150 + (d % 4) * 12.5, { trip, time: "07:10", description: "ADNOC", details: { site_type: "Deployment", kms: 380, bill_attached: "Y", vehicle: "Plate A 12345", odometer: odo1, litres: 52.6, fuel_station: "ADNOC" } });
       add(date, u1, "toll", 8, { trip, time: "07:55", description: "Salik", details: { toll_gate: "Salik – Al Safa", vehicle: "Plate A 12345" } });
       add(date, u2, "food", 60, { trip, time: "13:20", description: "Lunch for both", split: "custom", otherShare: 25 + (d % 3) * 5 });
       add(date, u2, "parking", 20, { trip, time: "10:05", description: "Site parking", location: trip.endsWith("Dubai") ? "Dubai" : "Ruwais", details: { duration: "4 hours" } });

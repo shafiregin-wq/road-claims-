@@ -23,7 +23,9 @@ and MITAK fills in the company's reimbursement Excel forms at the end of the mon
 
 Each person adds, changes and deletes only their own expenses; the colleague's expenses are visible
 but read-only. Fuel reports fill in the company's fuel claim form (built in), with Site / Type
-(Deployment = half claimed, AEP Client Site = full), KMs travelled and Bill attached.
+(Deployment = half claimed, AEP Client Site = full), KMs travelled and Bill attached. A Deployment bill is
+one shared car, so it goes on both people's forms (each claims half); AEP Client Site fuel is your own
+car and goes only on your form.
 
 Privacy: one closed workspace for exactly two people. The first person creates it and gets a one-time
 invite code; once the colleague joins, the code is gone and new sign-ups are refused. Every row and file is

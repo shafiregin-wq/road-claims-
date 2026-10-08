@@ -70,7 +70,9 @@ From then on the workspace is closed: the code no longer works and nobody else c
 **Fuel** already uses the company's fuel claim form (built in): Reports › Fuel › **Generate Excel**
 fills in your name, designation and employee ID (from Settings › Your details), one row per fuel
 expense with Site / Type, amount, KMs travelled and Bill attached, and the form's own formulas work out
-the reimbursable amount (half for Deployment, full for AEP Client Site) and the total.
+the reimbursable amount (half for Deployment, full for AEP Client Site) and the total. Deployment bills
+are shared, so each of you gets them on your own form, whoever paid; AEP Client Site bills are only on
+the form of the person who paid.
 
 For the other types, when you have the company's Excel forms:
 

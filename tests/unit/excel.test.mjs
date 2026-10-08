@@ -161,6 +161,7 @@ test("plain workbook when no template is uploaded", async () => {
 });
 
 test("the company fuel claim form, built in", async () => {
+  // Deployment = one shared car: the bill is on both forms, each claims half. AEP Client Site = own car.
   const { readFile } = await import("node:fs/promises");
   const { BUILTIN_TEMPLATES } = await import("../../js/fields.js");
   const tpl = await readFile(new URL("../../templates/fuel-claim-form.xlsx", import.meta.url));
@@ -169,7 +170,8 @@ test("the company fuel claim form, built in", async () => {
     { id: "1", category: "fuel", amount: 150, date: "2026-09-04", paidBy: "r", details: { site_type: "Deployment", kms: 520, bill_attached: "Y" }, receipts: [] },
     { id: "2", category: "fuel", amount: 200, date: "2026-09-12", paidBy: "r", description: "September AEP visits", details: { site_type: "AEP Client Site", kms: 580 }, receipts: [{ path: "x" }] },
     { id: "3", category: "fuel", amount: 50, date: "2026-09-21", paidBy: "r", details: { site_type: "Deployment", kms: 70, bill_attached: "N" }, receipts: [] },
-    { id: "4", category: "fuel", amount: 99, date: "2026-09-22", paidBy: "a", details: {}, receipts: [] }
+    { id: "4", category: "fuel", amount: 99, date: "2026-09-22", paidBy: "a", details: { site_type: "AEP Client Site" }, receipts: [] },
+    { id: "5", category: "fuel", amount: 120, date: "2026-09-23", paidBy: "a", details: { site_type: "Deployment", kms: 400, bill_attached: "Y" }, receipts: [] }
   ];
   const data = buildReportData({ expenses: list, members: [regin, { userId: "a", displayName: "Ashkar", profile: {} }], category: "fuel", month: "2026-09", paidBy: "r", today: "2026-10-02" });
   const ws = (await loadWorkbook(ExcelJS, await fillTemplate(ExcelJS, tpl, BUILTIN_TEMPLATES.fuel.mapping, data))).getWorksheet("Fuel Expense Claim");
@@ -181,10 +183,28 @@ test("the company fuel claim form, built in", async () => {
   assert.equal(ws.getCell("C13").numFmt, "dd-mmm-yyyy");
   assert.deepEqual(["D", "E", "G", "H", "I"].map(c => ws.getCell(`${c}14`).value), ["AEP Client Site", 200, "580 KM", "Y", "September AEP visits"]);
   assert.equal(ws.getCell("H15").value, "N");
-  assert.equal(ws.getCell("E16").value, null, "Ashkar's fuel is not on Regin's form");
+  assert.deepEqual(["C", "D", "E", "I"].map(c => ws.getCell(`${c}16`).value instanceof Date ? ws.getCell(`${c}16`).value.toISOString().slice(0, 10) : ws.getCell(`${c}16`).value),
+    ["2026-09-23", "Deployment", 120, "Shared bill – paid by Ashkar"], "Ashkar's Deployment bill is on Regin's form too (each claims half)");
+  assert.equal(ws.getCell("E17").value, null, "Ashkar's own-car (AEP) fuel is not on Regin's form");
   assert.equal(ws.getCell("F13").formula, 'IF(E13="","",IF(D13="Deployment",E13*0.5,E13))', "reimbursable amount stays a formula");
   assert.equal(ws.getCell("F21").formula, "SUM(F13:F20)");
   assert.equal(ws.getCell("C25").value, "REGIN SHAFI");
   assert.equal(ws.getCell("H25").value, "Date: 30-Sep-2026");
   assert.equal(ws.getCell("B2").value, "FUEL EXPENSE CLAIM FORM");
+});
+
+test("each person's fuel form: own bills plus the colleague's shared Deployment bills", async () => {
+  const { reportExpenses, claimable } = await import("../../js/reports.js");
+  const list = [
+    { id: "r1", category: "fuel", amount: 100, date: "2026-09-04", paidBy: "r", details: { site_type: "Deployment" } },
+    { id: "r2", category: "fuel", amount: 200, date: "2026-09-05", paidBy: "r", details: { site_type: "AEP Client Site" } },
+    { id: "a1", category: "fuel", amount: 80, date: "2026-09-06", paidBy: "a", details: { site_type: "Deployment" } },
+    { id: "a2", category: "fuel", amount: 60, date: "2026-09-07", paidBy: "a", details: { site_type: "AEP Client Site" } },
+    { id: "a3", category: "toll", amount: 8, date: "2026-09-07", paidBy: "a", details: {} }
+  ];
+  const ids = paidBy => reportExpenses(list, { category: "fuel", month: "2026-09", paidBy }).map(e => e.id);
+  assert.deepEqual(ids("r"), ["r1", "r2", "a1"]);
+  assert.deepEqual(ids("a"), ["r1", "a1", "a2"]);
+  assert.deepEqual(ids(""), ["r1", "r2", "a1", "a2"], "both of us: every bill once");
+  assert.deepEqual(["r1", "r2"].map(id => claimable(list.find(e => e.id === id))), [50, 200]);
 });

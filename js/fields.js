@@ -15,6 +15,9 @@ export const CATEGORIES = [
 ];
 export const CAT = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 
+// Fuel with this Site / Type is a shared bill: it appears on both people's fuel forms.
+export const SHARED_FUEL_SITE = "Deployment";
+
 export const STATIONS = ["ADNOC", "ENOC", "EPPCO", "Emarat"];
 export const TOLL_GATES = [
   "Salik – Al Garhoud Bridge", "Salik – Al Maktoum Bridge", "Salik – Al Barsha", "Salik – Al Safa", "Salik – Al Safa South",
@@ -30,9 +33,10 @@ export const PLACES = [
 // `remember: true` pre-fills the value from the same person's previous expense.
 export const DETAIL_FIELDS = {
   fuel: [
-    // On the fuel claim form, "Deployment" fuel is shared with the colleague (half is claimed) and
-    // "AEP Client Site" fuel is claimed in full.
-    { key: "site_type", label: "Site / Type", type: "choice", options: ["Deployment", "AEP Client Site"], remember: true, initial: "Deployment" },
+    // On the fuel claim form, "Deployment" fuel is one shared car: the bill goes on both people's
+    // forms and each claims half. "AEP Client Site" fuel is your own car: your form only, claimed in full.
+    { key: "site_type", label: "Site / Type", type: "choice", options: ["Deployment", "AEP Client Site"], remember: true, initial: "Deployment",
+      hint: { "Deployment": "Shared car: this bill goes on both your fuel forms, half claimed by each.", "AEP Client Site": "Own car: only on your fuel form, claimed in full." } },
     { key: "kms", label: "KMs travelled", unit: "km", type: "number", step: "1" },
     { key: "bill_attached", label: "Bill attached", type: "choice", options: ["Y", "N"], optionLabels: { Y: "Yes", N: "No" }, initial: "Y" },
     { key: "vehicle", label: "Vehicle", type: "text", placeholder: "e.g. Plate A 12345", remember: true },
