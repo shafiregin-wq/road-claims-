@@ -90,6 +90,24 @@ update members set display_name = 'Hacked' where role = 'owner';
 select t.eq((select display_name from members where role = 'owner'), 'Shafi', 'a member cannot rename the other member');
 select t.expect_error($$select regenerate_invite()$$, 'MITAK_OWNER_ONLY');
 
+-- ---------- Push notification phones ----------
+select save_push_subscription('https://push.example/b-phone', 'BPUBKEY', 'BAUTH', 'iPhone') is not null as _ \gset
+select t.eq((select count(*) from push_subscriptions), 1::bigint, 'a member sees their own phone');
+select t.expect_error($$select * from push_config$$, 'permission denied');
+select t.expect_error($$insert into push_subscriptions (endpoint, user_id, workspace_id, p256dh, auth) values ('https://x', auth.uid(), my_workspace_id(), 'k', 'a')$$, 'permission denied');
+select t.expect_error($$select save_push_subscription('javascript:alert(1)', 'k', 'a')$$, 'MITAK_PUSH_INVALID');
+select set_config('request.jwt.claims', json_build_object('sub', :'A')::text, false) is not null as _ \gset
+select t.eq((select count(*) from push_subscriptions), 0::bigint, 'the other member does not see it');
+select delete_push_subscription('https://push.example/b-phone') is not null as _ \gset
+select set_config('request.jwt.claims', json_build_object('sub', :'B')::text, false) is not null as _ \gset
+select t.eq((select count(*) from push_subscriptions), 1::bigint, 'and cannot delete it');
+select set_config('request.jwt.claims', json_build_object('sub', :'A')::text, false) is not null as _ \gset
+select save_push_subscription('https://push.example/b-phone', 'APUBKEY', 'AAUTH') is not null as _ \gset
+select t.eq((select user_id from push_subscriptions), :'A'::uuid, 'a phone signed in by someone else is taken over');
+select set_config('request.jwt.claims', json_build_object('sub', :'C')::text, false) is not null as _ \gset
+select t.expect_error($$select save_push_subscription('https://push.example/c', 'k', 'a')$$, 'MITAK_NOT_MEMBER');
+select set_config('request.jwt.claims', json_build_object('sub', :'B')::text, false) is not null as _ \gset
+
 -- ---------- The workspace is now closed ----------
 select set_config('request.jwt.claims', json_build_object('sub', :'A')::text, false) is not null as _ \gset
 select t.expect_error($$select regenerate_invite()$$, 'MITAK_WORKSPACE_FULL');

@@ -8,6 +8,7 @@ import { pickTemplate, openMappingEditor, openTemplateMenu, runReport } from "./
 import { PROFILE_FIELDS, PLACES, STATIONS, TOLL_GATES } from "./fields.js";
 import { esc, formatInvite } from "./util.js";
 import { $, ic, toast, openSheet, confirmDialog, copyText, SHEETS } from "./ui.js";
+import { refreshPushState, enablePush, disablePush, testPush, dismissBanner } from "./push.js";
 
 const CACHE_KEY = "mitak.cache.v1";
 const MODE_KEY = "mitak.mode";
@@ -74,7 +75,11 @@ async function boot() {
   try { await S.backend.init(); }
   catch (e) { S.phase = "config"; S.bootError = e; render(); return; }
   await enter();
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").then(() => { if (S.phase === "app") refreshPushState(); }).catch(() => {});
+    // Tapping a notification brings MITAK forward: show the new expense straight away.
+    navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.type === "refresh") onRemoteChange(); });
+  }
 }
 
 async function enter() {
@@ -95,6 +100,7 @@ async function enter() {
     writeCache(); render();
     if (unsub) unsub();
     unsub = S.backend.subscribe(onRemoteChange);
+    refreshPushState();
   } catch (e) {
     if (e.code === "session_expired") { await S.backend.signOut().catch(() => {}); return; }
     if (S.phase === "app") toast(e.code === "offline" ? "Offline: showing the last saved data." : errText(e, "Couldn’t refresh. Showing the last saved data."), "bad", 4500);
@@ -128,7 +134,7 @@ async function refreshData() {
   } catch (e) { /* stay on what we have */ }
   finally { refreshing = false; }
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.phase === "app") onRemoteChange(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.phase === "app") { onRemoteChange(); refreshPushState(); } });
 
 function insertDatalists() {
   const dl = (id, arr) => `<datalist id="${id}">${arr.map(v => `<option value="${esc(v)}"></option>`).join("")}</datalist>`;
@@ -397,6 +403,10 @@ const ACT = {
     catch (e) { toast(authErr(e, "Couldn’t make a new code."), "bad"); }
   },
   "save-profile": () => saveProfile(),
+  "push-on": () => enablePush(),
+  "push-off": () => disablePush(),
+  "push-test": () => testPush(),
+  "push-dismiss": () => dismissBanner(),
   "generate": b => runReport(b.dataset.cat),
   "tpl-upload": b => pickTemplate(b.dataset.cat),
   "tpl-edit": b => openMappingEditor(b.dataset.cat),
@@ -408,6 +418,8 @@ const ACT = {
   },
   "sign-out": async () => {
     if (S.phase === "app" && !await confirmDialog("Sign out of MITAK?", { okLabel: "Sign out", danger: false })) return;
+    // This phone shouldn't keep getting notifications for someone who signed out.
+    if (S.push && S.push.state === "on") await disablePush({ quiet: true });
     try { await S.backend.signOut(); } catch (e) {}
     leave();
   },

@@ -75,6 +75,29 @@ When you have the company's Excel forms:
 
 Until a template is uploaded, **Generate Excel** makes a simple MITAK layout instead. See [docs/TEMPLATES.md](docs/TEMPLATES.md) for the details of the mapping.
 
+## 7. Notifications
+
+MITAK can notify one of you when the other adds an expense. It needs one small server program in
+Supabase, which you add once:
+
+1. Run [`supabase/schema.sql`](supabase/schema.sql) again in the **SQL Editor** (it adds the tables
+   for notifications; running it again is safe).
+2. In Supabase open **Edge Functions** › **Deploy a new function** › **Via Editor**.
+3. Name it exactly `notify`. Delete the example code, paste the whole of
+   [`supabase/functions/notify/index.ts`](supabase/functions/notify/index.ts), and press **Deploy**.
+4. Open the function's **Details** (or settings), turn **off** “Enforce JWT verification” (sometimes
+   called “Verify JWT”), and save. The function checks who is signed in itself.
+
+Then each of you, on your own phone:
+
+- **iPhone:** notifications only work from the Home Screen app (iOS 16.4 or later). In Safari tap
+  **Share** › **Add to Home Screen**, open MITAK from the Home Screen, then **Settings** ›
+  **Notifications** › **Turn on notifications** and allow them.
+- **Android:** open MITAK in Chrome (or the installed app) › **Settings** › **Turn on notifications**.
+
+**Send a test** in the same place checks that it works. A notification appears for the other person
+each time one of you adds an expense (not for edits or deletions).
+
 ## Good to know
 
 - **Free Supabase projects pause after about a week with no use.** Using MITAK keeps it awake. If it ever pauses, open the Supabase dashboard and press **Restore**; nothing is lost.

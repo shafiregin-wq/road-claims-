@@ -1,10 +1,11 @@
-// MITAK service worker: lets the installed app open without a connection.
+// MITAK service worker: lets the installed app open without a connection, and shows push
+// notifications (sent by the Supabase Edge Function "notify") when the colleague adds an expense.
 // App files: newest from the network, saved copy when offline. Libraries from the CDN are
 // versioned, so the saved copy is used. Supabase (accounts, data, receipts) is never cached here.
-const VERSION = "mitak-v2";
+const VERSION = "mitak-v3";
 const SHELL = [
   "./", "./index.html", "./app.css", "./config.js", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png",
-  "./js/app.js", "./js/data.js", "./js/excel.js", "./js/expense-form.js", "./js/fields.js", "./js/reports.js",
+  "./js/app.js", "./js/data.js", "./js/excel.js", "./js/expense-form.js", "./js/fields.js", "./js/push.js", "./js/reports.js",
   "./js/state.js", "./js/templates-ui.js", "./js/ui.js", "./js/util.js", "./js/views.js"
 ];
 const LIBS = [
@@ -51,4 +52,28 @@ self.addEventListener("fetch", event => {
       return res;
     })));
   }
+});
+
+// A notification from the colleague's phone (see supabase/functions/notify).
+self.addEventListener("push", event => {
+  let msg = {};
+  try { msg = event.data ? event.data.json() : {}; } catch (e) { msg = { body: event.data ? event.data.text() : "" }; }
+  event.waitUntil(self.registration.showNotification(msg.title || "MITAK", {
+    body: msg.body || "",
+    tag: msg.tag || undefined,
+    icon: "icon-192.png",
+    badge: "icon-192.png",
+    data: { url: self.registration.scope }
+  }));
+});
+
+// Tapping it opens MITAK (or brings it forward and refreshes it).
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const open = windows.find(w => w.url.startsWith(self.registration.scope));
+    if (open) { await open.focus(); open.postMessage({ type: "refresh" }); return; }
+    await self.clients.openWindow(self.registration.scope);
+  })());
 });

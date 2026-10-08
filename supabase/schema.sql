@@ -347,6 +347,73 @@ create policy "mitak files: members delete" on storage.objects
   using (bucket_id = 'mitak' and (storage.foldername(name))[1] = public.my_workspace_id()::text);
 
 -- ---------------------------------------------------------------------
+-- Push notifications: each phone that turned notifications on, and the
+-- notification keys. The Edge Function "notify" (supabase/functions/notify)
+-- reads these with the service key; members only see their own phones.
+-- ---------------------------------------------------------------------
+
+create table if not exists public.push_subscriptions (
+  endpoint     text primary key check (char_length(endpoint) <= 1000),
+  user_id      uuid not null references auth.users(id) on delete cascade,
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  p256dh       text not null check (char_length(p256dh) <= 200),
+  auth         text not null check (char_length(auth) <= 100),
+  user_agent   text not null default '' check (char_length(user_agent) <= 300),
+  created_at   timestamptz not null default now()
+);
+
+-- Created by the Edge Function on first use. Nobody but the function can read it.
+create table if not exists public.push_config (
+  id          int primary key default 1 check (id = 1),
+  public_key  text not null,
+  private_jwk jsonb not null,
+  subject     text not null,
+  created_at  timestamptz not null default now()
+);
+
+alter table public.push_subscriptions enable row level security;
+alter table public.push_config        enable row level security;
+revoke all on public.push_subscriptions, public.push_config from anon, authenticated;
+grant select on public.push_subscriptions to authenticated;
+
+drop policy if exists "push: own phones" on public.push_subscriptions;
+create policy "push: own phones" on public.push_subscriptions
+  for select to authenticated using (user_id = auth.uid());
+
+-- Saves this phone for the signed-in member (taking it over if someone else used it before).
+create or replace function public.save_push_subscription(p_endpoint text, p_p256dh text, p_auth text, p_user_agent text default '')
+returns void
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+  wid uuid := public.my_workspace_id();
+begin
+  if uid is null or wid is null then raise exception 'MITAK_NOT_MEMBER'; end if;
+  if coalesce(p_endpoint, '') !~ '^https?://' or coalesce(p_p256dh, '') = '' or coalesce(p_auth, '') = '' then
+    raise exception 'MITAK_PUSH_INVALID';
+  end if;
+  insert into public.push_subscriptions (endpoint, user_id, workspace_id, p256dh, auth, user_agent)
+  values (p_endpoint, uid, wid, p_p256dh, p_auth, left(coalesce(p_user_agent, ''), 300))
+  on conflict (endpoint) do update
+    set user_id = excluded.user_id, workspace_id = excluded.workspace_id, p256dh = excluded.p256dh,
+        auth = excluded.auth, user_agent = excluded.user_agent, created_at = now();
+end
+$$;
+
+create or replace function public.delete_push_subscription(p_endpoint text)
+returns void
+language sql volatile security definer
+set search_path = public
+as $$
+  delete from public.push_subscriptions where endpoint = p_endpoint and user_id = auth.uid()
+$$;
+
+revoke execute on function public.save_push_subscription(text, text, text, text), public.delete_push_subscription(text) from public, anon;
+grant execute on function public.save_push_subscription(text, text, text, text), public.delete_push_subscription(text) to authenticated;
+
+-- ---------------------------------------------------------------------
 -- Live updates: when one colleague saves, the other's screen refreshes.
 -- ---------------------------------------------------------------------
 

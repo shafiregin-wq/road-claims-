@@ -45,6 +45,7 @@ button { cursor: pointer; }
 .center { text-align: center; display: block; margin-inline: auto; }
 .hint { font-size: .84rem; color: var(--muted); }
 .hint .ic { display: inline; vertical-align: -2px; }
+p .ic { display: inline-block; vertical-align: -3px; margin-right: 2px; }
 .eyebrow { font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 650; }
 .vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
 .err { color: var(--bad); font-weight: 600; font-size: .92rem; }
@@ -112,6 +113,8 @@ main { max-width: 680px; margin: 0 auto; padding-top: 20px; display: flex; flex-
   display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center;
 }
 .note.warn { background: #FEF2F2; border-color: #FECACA; }
+.push-note { justify-content: space-between; }
+.push-note .row-btns .btn { flex: 0 0 auto; }
 .note.invite { flex-direction: column; align-items: stretch; gap: 10px; }
 .note.invite > div:first-child { display: flex; flex-direction: column; gap: 2px; }
 .code-big {
