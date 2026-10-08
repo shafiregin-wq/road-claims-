@@ -17,7 +17,8 @@ and MITAK fills in the company's reimbursement Excel forms at the end of the mon
 | **Expenses** | Everything, filtered by month, date, person and type, newest or oldest first. Tap to edit or delete (with confirmation). |
 | **Summary** | A month's total, number of expenses, split by person, by type, and by trip (marked *Together* when both paid). |
 | **Reports** | Per month and type: total and **Generate Excel**, for both of you or one person, filled into the uploaded company template. |
-| **Settings** | Your name and details for the forms, the invite code, reimbursement templates and their field mapping, account. |
+| **Settings** | Your name and details for the forms, notifications, the invite code, reimbursement templates and their field mapping, account. |
+| **Notifications** | When one of you adds an expense, the other's phone gets a notification (“Shafi added an expense: ⛽ Fuel · AED 150.00”). |
 
 Privacy: one closed workspace for exactly two people. The first person creates it and gets a one-time
 invite code; once the colleague joins, the code is gone and new sign-ups are refused. Every row and file is
@@ -39,7 +40,9 @@ js/excel.js          template engine (fills .xlsx forms, inserts rows safely)
 js/reports.js        totals and the values written into Excel
 js/fields.js         categories, form fields and template fields: edit here to add fields
 js/data.js           Supabase backend and the on-device demo backend
-supabase/schema.sql  tables, privacy rules, invite functions, storage bucket
+js/push.js           turning notifications on/off, notifying the colleague
+supabase/schema.sql  tables, privacy rules, invite functions, storage bucket, notification phones
+supabase/functions/notify/index.ts   Edge Function that sends the notifications (Web Push)
 docs/TEMPLATES.md    how templates and mappings work
 sw.js, manifest.webmanifest, icon-*.png   installable app, offline start
 ```
@@ -48,10 +51,10 @@ sw.js, manifest.webmanifest, icon-*.png   installable app, offline start
 
 ```
 npm install
-npm test                # Excel engine and report values (+ LibreOffice check when installed)
+npm test                # Excel engine, report values, notification encryption (+ LibreOffice check)
 npm run test:sql        # schema.sql privacy rules on a throwaway PostgreSQL
-npm run test:e2e        # the app in Chromium with the demo backend
-npm run test:supabase   # the app against local Supabase Auth + PostgREST + PostgreSQL
+npm run test:e2e        # the app in Chromium with the demo backend; a push shown as a notification
+npm run test:supabase   # the app against local Supabase Auth + PostgREST + PostgreSQL, incl. notifications
 ```
 
 The browser tests use Playwright's Chromium. `test:sql` and `test:supabase` need PostgreSQL 15+ installed;

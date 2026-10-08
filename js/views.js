@@ -5,6 +5,7 @@ import { CATEGORIES, CAT, PROFILE_FIELDS } from "./fields.js";
 import { totals, inMonth, onDay, byDay, byTrip, newestFirst, oldestFirst, reportExpenses } from "./reports.js";
 import { esc, aed, compact, todayISO, monthOf, monthLabel, monthShort, shiftMonth, daysInMonth, parseISO, pad, fmtDayMonth, fmtLongDay, fmtTime, formatInvite, MONTHS } from "./util.js";
 import { ic } from "./ui.js";
+import { bannerDismissed } from "./push.js";
 
 const pct = (v, total) => total > 0 ? Math.max(2, Math.round(v / total * 100)) : 0;
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -52,6 +53,29 @@ function inviteBanner() {
   </div>`;
 }
 
+function pushBanner() {
+  const other = colleague();
+  if (!other || !S.push || S.push.state !== "off" || bannerDismissed() || !("Notification" in window) || Notification.permission !== "default") return "";
+  return `<div class="note push-note" data-testid="push-banner"><span>🔔 Get a notification when ${esc(other.displayName)} adds an expense.</span>
+    <span class="row-btns"><button class="btn primary small" data-act="push-on">Turn on</button><button class="btn small" data-act="push-dismiss">Not now</button></span></div>`;
+}
+
+function notificationsCard() {
+  const other = colleague(), who = other ? esc(other.displayName) : "your colleague";
+  const st = (S.push && S.push.state) || "checking";
+  const body = {
+    checking: `<p class="muted small">Checking…</p>`,
+    demo: `<p class="small">Notifications work in the real app, not in the demo.</p>`,
+    "ios-browser": `<p class="small">On iPhone, notifications need MITAK on your Home Screen: in Safari tap <b>Share</b> › <b>Add to Home Screen</b>, open MITAK from there, and turn them on here.</p>`,
+    unsupported: `<p class="small">This browser can’t show notifications. Try Chrome or Safari, or add MITAK to your Home Screen.</p>`,
+    denied: `<p class="small">Notifications are blocked for MITAK. Allow them in your phone’s settings (on iPhone: Settings › Notifications › MITAK), then come back here.</p>`,
+    off: `<p class="small">Get a notification on this phone when ${who} adds an expense.</p><button class="btn primary" data-act="push-on">🔔 Turn on notifications</button>`,
+    on: `<p class="small">${ic("check", 16)} On for this phone. You’ll be notified when ${who} adds an expense.</p>
+      <div class="row-btns"><button class="btn" data-act="push-test">Send a test</button><button class="btn" data-act="push-off">Turn off</button></div>`
+  }[st] || "";
+  return `<section class="card stack" id="notifications" data-testid="notifications" data-state="${st}"><h2>Notifications</h2>${body}</section>`;
+}
+
 /* ---------- Dashboard ---------- */
 
 export function viewHome() {
@@ -68,6 +92,7 @@ export function viewHome() {
   </section>
   <button class="btn primary xl add-main" data-act="add-expense">${ic("plus", 24)} Add Expense</button>
   ${inviteBanner()}
+  ${pushBanner()}
   <section class="card">
     <div class="card-head"><h2>Today</h2><span class="muted small">${plural(tT.count, "expense")}</span></div>
     ${peopleRows(tT.byUser, tT.total)}
@@ -270,6 +295,7 @@ export function viewSettings() {
     ${colleague() ? `<p class="hint">${ic("lock", 14)} This workspace is closed: only the two of you can see its expenses and files.</p>` : inviteBanner()}
     ${!colleague() && my.role === "owner" && !demo ? `<button class="link" data-act="new-invite">Make a new invite code</button>` : ""}
   </section>
+  ${notificationsCard()}
   <section class="card stack" id="templates">
     <h2>Reimbursement templates</h2>
     <p class="hint">Upload your company’s Excel form for each type. MITAK fills it in each month and keeps its layout, formulas and formatting.</p>

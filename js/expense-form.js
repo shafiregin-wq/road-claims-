@@ -5,6 +5,7 @@ import { CATEGORIES, CAT, DETAIL_FIELDS } from "./fields.js";
 import { newestFirst } from "./reports.js";
 import { esc, aed, num, r2, uid, todayISO, nowTime, validISO, fmtDate } from "./util.js";
 import { $, ic, openSheet, toast, confirmDialog, compressImage } from "./ui.js";
+import { notifyColleague } from "./push.js";
 
 const DRAFT_KEY = "mitak.draft.v1";
 const readDraft = () => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch (e) { return null; } };
@@ -233,7 +234,7 @@ export function openExpense(id, preset = {}) {
       if (removed.length) S.backend.deleteFiles(removed).catch(() => {});
       const i = S.expenses.findIndex(e => e.id === saved.id);
       if (i >= 0) S.expenses[i] = saved; else S.expenses.push(saved);
-      if (!existing) clearDraft();
+      if (!existing) { clearDraft(); notifyColleague(saved.id); }
       sh.close();
       toast(existing ? "Expense updated." : "Expense added successfully.", "ok");
       rerender();

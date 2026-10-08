@@ -2,6 +2,8 @@
 //   /auth/v1/*    → Supabase Auth (GoTrue)
 //   /rest/v1/*    → PostgREST
 //   /storage/v1/* → an in-memory file store (enough for receipts and templates; no access rules)
+//   /functions/v1/<name> → the Edge Function's handler, run in this process
+//   /push/<phone>  → a stand-in push service that keeps what it receives
 import http from "node:http";
 import { createHmac } from "node:crypto";
 
@@ -18,13 +20,26 @@ const CORS = {
   "access-control-expose-headers": "content-range, x-supabase-api-version"
 };
 
-export function startGateway({ port, authPort, restPort }) {
+export function startGateway({ port, authPort, restPort, functions = {}, inbox = [] }) {
   const files = new Map();
   const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") { res.writeHead(204, CORS); res.end(); return; }
     const url = new URL(req.url, "http://x");
     const body = await new Promise(r => { const c = []; req.on("data", d => c.push(d)); req.on("end", () => r(Buffer.concat(c))); });
     if (url.pathname.startsWith("/storage/v1/")) return storage(req, res, url, body, files);
+    if (url.pathname.startsWith("/push/")) {
+      inbox.push({ phone: url.pathname.slice(6), headers: req.headers, body });
+      res.writeHead(201); res.end(); return;
+    }
+    const fn = /^\/functions\/v1\/([^/]+)$/.exec(url.pathname);
+    if (fn) {
+      if (!functions[fn[1]]) { res.writeHead(404, CORS); res.end("{}"); return; }
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v);
+      const out = await functions[fn[1]](new Request(`http://127.0.0.1:${port}${url.pathname}`, { method: req.method, headers, body: ["GET", "HEAD"].includes(req.method) ? undefined : body }));
+      res.writeHead(out.status, { ...Object.fromEntries(out.headers), ...CORS });
+      res.end(Buffer.from(await out.arrayBuffer())); return;
+    }
     const target = url.pathname.startsWith("/auth/v1/") ? { port: authPort, path: url.pathname.slice(8) }
       : url.pathname.startsWith("/rest/v1/") ? { port: restPort, path: url.pathname.slice(8) } : null;
     if (!target) { res.writeHead(404, CORS); res.end("{}"); return; }

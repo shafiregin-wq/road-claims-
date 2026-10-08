@@ -166,6 +166,23 @@ export class SupabaseBackend {
     return () => this.unsubscribe();
   }
   unsubscribe() { if (this.channel) { this.client.removeChannel(this.channel); this.channel = null; } }
+
+  // Push notifications, sent by the Edge Function "notify".
+  async invokeNotify(body) {
+    const { data, error } = await this.client.functions.invoke("notify", { body });
+    if (!error) return data;
+    const status = error.context && error.context.status;
+    if (status === 401) throw new AppError("session_expired", error.message);
+    if (status === 404 || error.name === "FunctionsRelayError" || (error.name === "FunctionsFetchError" && navigator.onLine)) throw new AppError("push_not_set_up", error.message);
+    throw toAppError(error);
+  }
+  pushPublicKey() { return guard(async () => (await this.invokeNotify({ action: "key" })).publicKey); }
+  notifyExpense(expenseId) { return guard(() => this.invokeNotify({ action: "expense", expense_id: expenseId })); }
+  testPush() { return guard(() => this.invokeNotify({ action: "test" })); }
+  savePushSubscription(s) {
+    return guard(async () => { check(await this.client.rpc("save_push_subscription", { p_endpoint: s.endpoint, p_p256dh: s.p256dh, p_auth: s.auth, p_user_agent: s.userAgent || "" })); });
+  }
+  deletePushSubscription(endpoint) { return guard(async () => { check(await this.client.rpc("delete_push_subscription", { p_endpoint: endpoint })); }); }
 }
 
 /* ===================================================================== */

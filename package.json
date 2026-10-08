@@ -6,13 +6,14 @@
   "scripts": {
     "test": "node --test tests/unit/*.test.mjs",
     "test:sql": "bash tests/sql/run.sh",
-    "test:e2e": "node --test tests/e2e/run.mjs",
+    "test:e2e": "node --test tests/e2e/run.mjs tests/e2e/push-sw.test.mjs",
     "serve": "npx http-server -p 8080 -c-1 .",
     "test:supabase": "node --test tests/supabase-local/run.mjs"
   },
   "devDependencies": {
     "@supabase/supabase-js": "2.112.4",
     "exceljs": "4.4.0",
+    "http_ece": "^1.2.1",
     "jszip": "3.10.1"
   }
 }

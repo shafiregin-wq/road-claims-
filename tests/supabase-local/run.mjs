@@ -11,7 +11,10 @@ import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
+import { createECDH, randomBytes } from "node:crypto";
+import ece from "http_ece";
 import { startGateway, jwt } from "./gateway.mjs";
+import { handle as notifyHandler } from "../../supabase/functions/notify/index.ts";
 import { serve, routeCdn, ROOT } from "../e2e/harness.mjs";
 
 let chromium;
@@ -25,6 +28,7 @@ const SECRET = "mitak-local-test-secret-at-least-32-characters";
 const PG_PORT = 54340, AUTH_PORT = 54341, REST_PORT = 54342, GW_PORT = 54343;
 const procs = [];
 let dataDir, gateway, app, browser;
+const inbox = [];
 
 function sh(cmd, args, opts = {}) { return execFileSync(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...opts }).toString(); }
 function fetchBinaries() {
@@ -75,7 +79,9 @@ before(async () => {
     PGRST_JWT_SECRET: SECRET, PGRST_SERVER_PORT: String(REST_PORT), PGRST_SERVER_HOST: "127.0.0.1", PGRST_LOG_LEVEL: "warn"
   });
   await waitFor(`http://127.0.0.1:${REST_PORT}/`, rest);
-  gateway = await startGateway({ port: GW_PORT, authPort: AUTH_PORT, restPort: REST_PORT });
+  const serviceKey = jwt({ role: "service_role", iss: "supabase", iat: 1700000000, exp: 2000000000 }, SECRET);
+  const notifyEnv = { url: `http://127.0.0.1:${GW_PORT}`, key: serviceKey, allowHttp: true };
+  gateway = await startGateway({ port: GW_PORT, authPort: AUTH_PORT, restPort: REST_PORT, inbox, functions: { notify: req => notifyHandler(req, notifyEnv) } });
   const anonKey = jwt({ role: "anon", iss: "supabase", iat: 1700000000, exp: 2000000000 }, SECRET);
   app = await serve(0, { config: { supabaseUrl: `http://127.0.0.1:${GW_PORT}`, supabaseAnonKey: anonKey } });
   browser = await chromium.launch();
@@ -90,9 +96,33 @@ after(async () => {
 });
 
 const errors = [];
-async function person() {
+// A phone's push keys, and a stand-in for the browser's push support that uses them.
+function phoneKeys(name) {
+  const ecdh = createECDH("prime256v1"); ecdh.generateKeys();
+  const auth = randomBytes(16);
+  return { name, ecdh, auth, endpoint: `http://127.0.0.1:${GW_PORT}/push/${name}`, p256dh: ecdh.getPublicKey().toString("base64url"), authB64: auth.toString("base64url") };
+}
+function fakePush(cfg) {
+  let sub = null, permission = "default";
+  const make = () => ({ endpoint: cfg.endpoint, toJSON: () => ({ endpoint: cfg.endpoint, keys: { p256dh: cfg.p256dh, auth: cfg.auth } }), unsubscribe: async () => { sub = null; return true; } });
+  const reg = { scope: location.origin + "/", pushManager: { getSubscription: async () => sub, subscribe: async o => { window.__serverKey = o.applicationServerKey; sub = make(); return sub; } } };
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { getRegistration: async () => reg, register: async () => reg, addEventListener() {} } });
+  window.PushManager = window.PushManager || function () {};
+  window.Notification = class { static get permission() { return permission; } static async requestPermission() { permission = "granted"; return permission; } };
+}
+async function nextPush(phone, after) {
+  for (let i = 0; i < 100; i++) {
+    const hit = inbox.slice(after).find(m => m.phone === phone.name);
+    if (hit) return { ...hit, message: JSON.parse(ece.decrypt(hit.body, { version: "aes128gcm", privateKey: phone.ecdh, authSecret: phone.auth }).toString("utf8")) };
+    await new Promise(r => setTimeout(r, 100));
+  }
+  throw new Error("no push arrived for " + phone.name);
+}
+
+async function person(phone) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
   await routeCdn(ctx);
+  if (phone) await ctx.addInitScript(fakePush, { endpoint: phone.endpoint, p256dh: phone.p256dh, auth: phone.authB64 });
   // Live updates (Realtime) aren't part of this local setup.
   await ctx.route(/\/realtime\/v1\//, r => r.abort());
   const page = await ctx.newPage();
@@ -143,7 +173,8 @@ test("two colleagues on a real Supabase stack", async () => {
   assert.match(await errText(x, "#onboard-form .err"), /isn’t right/);
 
   // The colleague joins with the code.
-  const b = await person();
+  const ahmedPhone = phoneKeys("ahmed");
+  const b = await person(ahmedPhone);
   await b.goto(app.url + "?invite=" + code);
   await b.click("[data-act=auth-mode][data-m=signup]");
   await b.fill("#a-email", "ahmed@example.com");
@@ -161,10 +192,41 @@ test("two colleagues on a real Supabase stack", async () => {
   assert.match(await b.textContent("[data-testid=expense-sheet]"), /Added by Shafi/);
   await b.click(".sheet [data-close]");
 
+  // Notifications: Ahmed turns them on from the Home banner; Shafi adds an expense; Ahmed's phone gets it.
+  await b.waitForSelector("[data-testid=push-banner]");
+  await b.click("[data-testid=push-banner] [data-act=push-on]");
+  await b.waitForSelector(".toast >> text=Notifications are on for this phone.");
+  await b.click("#gear");
+  await b.waitForSelector("[data-testid=notifications][data-state=on]");
+  assert.equal(await b.evaluate(() => window.__serverKey.length), 65, "subscribed with the function's public key");
+  let seen = inbox.length;
+  await addExpense(a, "toll", "8", async () => { await a.fill("#e-desc", "Salik"); });
+  let push = await nextPush(ahmedPhone, seen);
+  assert.deepEqual(push.message, { title: "Shafi added an expense", body: "🛣️ Toll · AED 8.00 · Salik", tag: push.message.tag });
+  assert.match(push.headers.authorization, /^vapid t=.+, k=.+/);
+  assert.equal(push.headers["content-encoding"], "aes128gcm");
+  // Recorded for Ahmed by Shafi: Ahmed is told it was paid by him.
+  await a.reload();
+  await a.waitForFunction(() => /Ahmed’s spending/.test((document.querySelector(".split.strong") || {}).textContent || ""));
+  seen = inbox.length;
+  await addExpense(a, "food", "30", async () => { await a.click("[data-pick=paidBy]:not([aria-pressed=true])"); });
+  push = await nextPush(ahmedPhone, seen);
+  assert.equal(push.message.body, "🍴 Food · AED 30.00 · paid by you");
+  // Ahmed's own expenses don't notify Ahmed; the test button does.
+  seen = inbox.length;
+  await b.click("[data-act=push-test]");
+  await b.waitForSelector(".toast >> text=Test sent.");
+  push = await nextPush(ahmedPhone, seen);
+  assert.equal(push.message.body, "Notifications are working on this phone.");
+  assert.equal(inbox.slice(seen).length, 1, "nothing else was sent");
+  const anon = await fetch(`http://127.0.0.1:${GW_PORT}/functions/v1/notify`, { method: "POST", body: "{}" });
+  assert.equal(anon.status, 401, "the function needs a signed-in member");
+  await b.click(".tab[data-to=home]");
+
   // Shafi sees Ahmed's expense after a refresh, and can edit it.
   await a.reload();
   await a.waitForSelector(".hello");
-  await a.waitForFunction(() => /Ahmed’s spending\s*AED 20\.00/.test(document.querySelector(".split.strong").textContent));
+  await a.waitForFunction(() => /Ahmed’s spending\s*AED 50\.00/.test(document.querySelector(".split.strong").textContent));
   await a.locator(".xrow", { hasText: "Parking" }).first().click();
   await a.fill("#e-amount", "25");
   await a.click("[data-x=save]");
@@ -192,9 +254,9 @@ test("two colleagues on a real Supabase stack", async () => {
   await a.click("[data-x=delete]");
   await a.click(".dialog [data-v='1']");
   await a.waitForSelector(".toast >> text=Expense deleted.");
+  // After a reload MITAK shows the saved copy first, then the fresh data.
   await b.reload();
-  await b.waitForSelector(".hello");
-  assert.match(await b.textContent(".split.strong"), /My spending\s*AED 0\.00/);
+  await b.waitForFunction(() => /My spending\s*AED 30\.00/.test((document.querySelector(".split.strong") || {}).textContent || ""));
 
   // Profile and sign out / sign in again.
   await b.click("#gear");
